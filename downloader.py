@@ -2,6 +2,8 @@ import os
 import sys
 import argparse
 import urllib.request
+import ssl
+import subprocess
 
 BASE_URL = "https://users.flatironinstitute.org/~camels/Sims"
 
@@ -16,9 +18,47 @@ def show_progress(block_num, block_size, total_size):
         print(f"\r{percent:.1f}% | {mb_downloaded:.1f}/{mb_total:.1f} MB", end='', flush=True)
 
 
+def download_with_wget(url, dest):
+    """
+    Download using wget (preferred on HPC clusters).
+    
+    Parameters
+    ----------
+    url : str
+        URL to download from
+    dest : str
+        Destination file path
+        
+    Returns
+    -------
+    bool
+        True if download successful, False otherwise
+    """
+    try:
+        # Use wget with:
+        # --no-check-certificate: Skip SSL verification (trusted source)
+        # --progress=bar:force: Show progress bar
+        # -O: Output file
+        # -c: Continue partial downloads
+        cmd = ['wget', '--no-check-certificate', '--progress=bar:force', 
+               '-O', dest, '-c', url]
+        
+        result = subprocess.run(cmd, check=True)
+        return result.returncode == 0
+        
+    except subprocess.CalledProcessError as e:
+        print(f"\nwget failed with error code {e.returncode}")
+        return False
+    except FileNotFoundError:
+        # wget not available
+        return False
+
+
 def download(suite, sim_set, sim_name, snapshot, dest, file_type='snapshot'):
     """
     Download CAMELS data via HTTP with progress bar.
+    
+    Uses wget (preferred on HPC) with urllib fallback.
     
     Parameters
     ----------
@@ -54,7 +94,28 @@ def download(suite, sim_set, sim_name, snapshot, dest, file_type='snapshot'):
     print(f"Downloading: {url}")
     print(f"Saving to: {dest}")
     
+    # Try wget first (works best on HPC clusters with SSL issues)
+    print("\nTrying wget...")
+    if download_with_wget(url, dest):
+        print("\nDownload complete!")
+        return True
+    
+    # Fallback to urllib with relaxed SSL verification
+    print("\nwget failed or not available, falling back to urllib...")
     try:
+        # Create SSL context that doesn't verify certificates
+        # This is acceptable for trusted public research data
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        # Install the opener globally
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ssl_context)
+        )
+        urllib.request.install_opener(opener)
+        
+        # Download with progress bar
         urllib.request.urlretrieve(url, dest, reporthook=show_progress)
         print("\nDownload complete!")
         return True
