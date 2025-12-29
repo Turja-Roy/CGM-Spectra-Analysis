@@ -129,10 +129,11 @@ def cmd_cgm(args):
         snapshot_path = Path(snapshot_file)
         snap_num = snapshot_path.stem.split('_')[-1]
         line_str = '_'.join(lines_to_compute)
-        output_file = str(config.OUTPUT_DIR / 
+        
+        output_dir = config.get_spectra_output_dir(snapshot_file, spectra_type='cgm')
+        output_file = str(output_dir / 
                          f"cgm_{line_str}_spectra_snap_{snap_num}_n{n_sightlines}.hdf5")
     
-    # Ensure output directory exists
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     

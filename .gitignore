@@ -5,3 +5,4 @@ venv/
 *.hdf5
 *.hdf5.backup
 *.md
+spectra/

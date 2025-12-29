@@ -88,22 +88,17 @@ def cmd_generate(args):
     if output_file:
         savefile = os.path.abspath(output_file)
     else:
-        savefile = config.get_snapshot_output_name(
+        output_dir = config.get_spectra_output_dir(snapshot_file, spectra_type='camel')
+        
+        filename = config.get_snapshot_output_name(
             snapshot_file,
             lines=lines_to_compute,
             num_sightlines=num_sightlines
         )
-        # Save in same directory as snapshot - use absolute path
-        if not os.path.isabs(savefile):
-            savefile = os.path.abspath(os.path.join(
-                snapshot_dir, savefile) if snapshot_dir else savefile)
+        
+        savefile = str(output_dir / filename)
 
     print(f"Output will be saved to: {savefile}")
-
-    # Create output directory if needed
-    output_dir = os.path.dirname(savefile)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
 
     # Generate spectra
     print("\n[4/5] Initializing spectra object...")

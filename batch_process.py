@@ -39,10 +39,13 @@ def run_generate_command(snapshot_path, num_sightlines=100, lines='lya', output_
     ]
 
     if output_dir:
-        # Construct output filename
+        info = config.extract_simulation_info(snapshot_path)
         snapshot_name = Path(snapshot_path).stem
-        output_file = Path(output_dir) / \
-            f"camel_{lines}_spectra_{snapshot_name}.hdf5"
+        
+        sim_output_dir = Path(output_dir) / info['sim_name']
+        sim_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_file = sim_output_dir / f"camel_{lines}_spectra_{snapshot_name}.hdf5"
         cmd.extend(['-o', str(output_file)])
 
     try:

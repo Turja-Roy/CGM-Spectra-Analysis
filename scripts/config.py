@@ -8,11 +8,13 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 DATA_DIR = PROJECT_ROOT / "data"
 PLOTS_DIR = PROJECT_ROOT / "plots"
 OUTPUT_DIR = PROJECT_ROOT / "output"
+SPECTRA_DIR = PROJECT_ROOT / "spectra"
 ARCHIVE_DIR = PROJECT_ROOT / "archive"
 
 # Ensure output directories exist
 PLOTS_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+SPECTRA_DIR.mkdir(exist_ok=True)
 
 
 # CAMEL simulation suites available
@@ -126,6 +128,42 @@ def get_available_snapshots(suite='IllustrisTNG', sim_set='LH', sim_num='0'):
                         continue
 
     return snapshots
+
+
+def extract_simulation_info(snapshot_path):
+    snapshot_path = Path(snapshot_path)
+    parts = snapshot_path.parts
+    
+    if len(parts) >= 4:
+        suite = parts[-4]
+        sim_set = parts[-3]
+        sim_name = parts[-2]
+    else:
+        suite = 'Unknown'
+        sim_set = 'Unknown'
+        sim_name = 'Unknown'
+    
+    snap_num = snapshot_path.stem.split('_')[-1]
+    
+    return {
+        'suite': suite,
+        'sim_set': sim_set,
+        'sim_name': sim_name,
+        'snap_num': snap_num
+    }
+
+
+def get_spectra_output_dir(snapshot_path, spectra_type='camel'):
+    info = extract_simulation_info(snapshot_path)
+    
+    output_dir = SPECTRA_DIR / info['suite'] / info['sim_set'] / info['sim_name']
+    
+    if spectra_type == 'cgm':
+        output_dir = output_dir / 'cgm'
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    return output_dir
 
 
 # Print summary of all available simulation data

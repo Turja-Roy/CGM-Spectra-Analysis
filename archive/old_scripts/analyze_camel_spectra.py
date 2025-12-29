@@ -76,7 +76,7 @@ if not os.path.exists(snapshot_file):
                     print(f"  Found: {filepath}")
                     found = True
         if not found:
-            print("  No snapshots found in data/ directory")
+            print("No snapshots found in data/ directory")
     sys.exit(1)
 
 # Extract snapshot number and directory from file path
@@ -105,10 +105,10 @@ with h5py.File(snapshot_file, 'r') as f:
     hubble = header.attrs['HubbleParam']
     n_gas = header.attrs['NumPart_ThisFile'][0]
 
-print(f"  Snapshot: {snapshot_name}")
-print(f"  Redshift: z = {redshift:.3f}")
-print(f"  Box size: {boxsize:.1f} ckpc/h = {boxsize/hubble/1000:.2f} Mpc/h")
-print(f"  Gas particles: {n_gas:,}")
+print(f"Snapshot: {snapshot_name}")
+print(f"Redshift: z = {redshift:.3f}")
+print(f"Box size: {boxsize:.1f} ckpc/h = {boxsize/hubble/1000:.2f} Mpc/h")
+print(f"Gas particles: {n_gas:,}")
 
 # ============================================================================
 # STEP 2: Generate random sightlines
@@ -123,14 +123,14 @@ cofm = np.random.uniform(0, boxsize, size=(num_sightlines, 3))
 # Random axes (1=x, 2=y, 3=z)
 axis = np.random.randint(1, 4, size=num_sightlines)
 
-print(f"  Generated {num_sightlines} random sightlines")
-print(f"  Box coverage: uniform random sampling")
+print(f"Generated {num_sightlines} random sightlines")
+print(f"Box coverage: uniform random sampling")
 
 # ============================================================================
 # STEP 3: Run fake_spectra
 # ============================================================================
 print("\n[Step 3] Running fake_spectra (this may take a few minutes)...")
-print("  Computing Lyman-alpha optical depths along sightlines...")
+print("Computing Lyman-alpha optical depths along sightlines...")
 
 from fake_spectra import spectra
 from fake_spectra import abstractsnapshot
@@ -212,20 +212,20 @@ spec = spectra.Spectra(
     reload_file=not args.no_reload  # Force recompute unless --no-reload specified
 )
 
-print(f"  Loaded snapshot successfully")
-print(f"  Velocity range: {spec.vmax:.2f} km/s")
-print(f"  Resolution: {spec.dvbin:.4f} km/s/pixel")
+print(f"Loaded snapshot successfully")
+print(f"Velocity range: {spec.vmax:.2f} km/s")
+print(f"Resolution: {spec.dvbin:.4f} km/s/pixel")
 
 # Compute Lyman-alpha optical depth
 spec.get_tau("H", 1, 1215)
 
 # Extract tau array
 tau = spec.tau[("H", 1, 1215)]
-print(f"  ✓ Computed optical depths: {tau.shape}")
+print(f"Computed optical depths: {tau.shape}")
 
 # Save to file
 spec.save_file()
-print(f"  ✓ Saved spectra to: {spec.savefile}")
+print(f"Saved spectra to: {spec.savefile}")
 
 # ============================================================================
 # STEP 4: Analysis - Compute flux and statistics
@@ -236,15 +236,15 @@ flux = np.exp(-tau)
 mean_flux = np.mean(flux)
 eff_tau = -np.log(mean_flux)
 
-print(f"  Mean flux: {mean_flux:.4f}")
-print(f"  Effective optical depth: {eff_tau:.4f}")
-print(f"  Flux range: [{flux.min():.4f}, {flux.max():.4f}]")
-print(f"  Tau range: [{tau.min():.4f}, {tau.max():.4f}]")
+print(f"Mean flux: {mean_flux:.4f}")
+print(f"Effective optical depth: {eff_tau:.4f}")
+print(f"Flux range: [{flux.min():.4f}, {flux.max():.4f}]")
+print(f"Tau range: [{tau.min():.4f}, {tau.max():.4f}]")
 
 # Deep absorption statistics
 deep = (flux < 0.1).sum()
 total_pixels = flux.size
-print(f"  Deep absorption (F < 0.1): {100*deep/total_pixels:.2f}% of pixels")
+print(f"Deep absorption (F < 0.1): {100*deep/total_pixels:.2f}% of pixels")
 
 # ============================================================================
 # STEP 5: Create comprehensive plots
@@ -257,7 +257,7 @@ Path('plots').mkdir(exist_ok=True)
 velocity = np.arange(tau.shape[1]) * spec.dvbin
 
 # ===== PLOT 1: Sample Spectra =====
-print("  (1/4) Sample spectra...")
+print("(1/4) Sample spectra...")
 
 fig1, axes = plt.subplots(5, 1, figsize=(14, 10))
 indices = np.random.choice(num_sightlines, min(5, num_sightlines), replace=False)
@@ -278,10 +278,10 @@ plt.suptitle(f'CAMEL Lyman-α Spectra (z={redshift:.2f})',
              fontsize=14, fontweight='bold')
 plt.tight_layout()
 plt.savefig(f'plots/camel_sample_spectra_{snapshot_name}.png', dpi=150, bbox_inches='tight')
-print(f"     → plots/camel_sample_spectra_{snapshot_name}.png")
+print(f"-> plots/camel_sample_spectra_{snapshot_name}.png")
 
 # ===== PLOT 2: Flux Statistics =====
-print("  (2/4) Flux statistics...")
+print("(2/4) Flux statistics...")
 
 fig2, axes = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -335,10 +335,10 @@ axes[1, 1].grid(alpha=0.2)
 
 plt.tight_layout()
 plt.savefig(f'plots/camel_flux_statistics_{snapshot_name}.png', dpi=150, bbox_inches='tight')
-print(f"     → plots/camel_flux_statistics_{snapshot_name}.png")
+print(f"-> plots/camel_flux_statistics_{snapshot_name}.png")
 
 # ===== PLOT 3: Flux Power Spectrum =====
-print("  (3/4) Flux power spectrum...")
+print("(3/4) Flux power spectrum...")
 
 # Fluctuation field
 delta_F = (flux - mean_flux) / mean_flux
@@ -373,10 +373,10 @@ ax.grid(alpha=0.3, which='both')
 
 plt.tight_layout()
 plt.savefig(f'plots/camel_power_spectrum_{snapshot_name}.png', dpi=150, bbox_inches='tight')
-print(f"     → plots/camel_power_spectrum_{snapshot_name}.png")
+print(f"-> plots/camel_power_spectrum_{snapshot_name}.png")
 
 # ===== PLOT 4: Transmission Statistics =====
-print("  (4/4) Transmission statistics...")
+print("(4/4) Transmission statistics...")
 
 fig4, axes = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -442,7 +442,7 @@ axes[1, 1].text(0.1, 0.5, stats_text, fontfamily='monospace',
 
 plt.tight_layout()
 plt.savefig(f'plots/camel_transmission_stats_{snapshot_name}.png', dpi=150, bbox_inches='tight')
-print(f"     → plots/camel_transmission_stats_{snapshot_name}.png")
+print(f"-> plots/camel_transmission_stats_{snapshot_name}.png")
 
 # ============================================================================
 # Summary
@@ -454,9 +454,9 @@ print(f"\nGenerated spectra: {num_sightlines} sightlines at z={redshift:.3f}")
 print(f"Mean flux: <F> = {mean_flux:.4f}")
 print(f"Effective optical depth: τ_eff = {eff_tau:.4f}")
 print(f"\nPlots saved:")
-print(f"  1. plots/camel_sample_spectra_{snapshot_name}.png")
-print(f"  2. plots/camel_flux_statistics_{snapshot_name}.png")
-print(f"  3. plots/camel_power_spectrum_{snapshot_name}.png")
-print(f"  4. plots/camel_transmission_stats_{snapshot_name}.png")
+print(f"1. plots/camel_sample_spectra_{snapshot_name}.png")
+print(f"2. plots/camel_flux_statistics_{snapshot_name}.png")
+print(f"3. plots/camel_power_spectrum_{snapshot_name}.png")
+print(f"4. plots/camel_transmission_stats_{snapshot_name}.png")
 print(f"\nSpectra data saved: {spec.savefile}")
 print("\n" + "="*70)
