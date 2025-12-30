@@ -9,6 +9,7 @@ from scripts.commands import (
     cmd_analyze,
     cmd_compare,
     cmd_evolve,
+    cmd_diagnose,
     cmd_pipeline,
     cmd_halo,
     cmd_cgm,
@@ -103,7 +104,9 @@ Documentation:
     parser_compare.add_argument('-l', '--labels', type=str, default=None,
                                 help='Comma-separated labels for simulations (default: auto-generated)')
     parser_compare.add_argument('-o', '--output', type=str, default=None,
-                                help='Output plot path (default: plots/simulation_comparison.png)')
+                                help='Output directory or file path (default: plots/comparisons/)')
+    parser_compare.add_argument('--mode', type=str, default='quick', choices=['quick', 'detailed', 'full'],
+                                help='Analysis mode: quick (basic), detailed (enhanced plots), full (all analyses)')
     parser_compare.set_defaults(func=cmd_compare)
 
     parser_evolve = subparsers.add_parser('evolve',
@@ -113,7 +116,9 @@ Documentation:
     parser_evolve.add_argument('-l', '--labels', type=str, default=None,
                                help='Comma-separated labels for snapshots (default: auto-generated)')
     parser_evolve.add_argument('-o', '--output', type=str, default=None,
-                               help='Output plot path (default: plots/redshift_evolution.png)')
+                               help='Output directory or file path (default: plots/comparisons/)')
+    parser_evolve.add_argument('--mode', type=str, default='quick', choices=['quick', 'detailed', 'full'],
+                               help='Analysis mode: quick (basic), detailed (enhanced plots), full (all analyses)')
     parser_evolve.set_defaults(func=cmd_evolve)
 
     parser_pipeline = subparsers.add_parser('pipeline',
@@ -153,6 +158,17 @@ Documentation:
                                       'radial', 'summary'],
                              help='Type of plot to generate (default: summary)')
     parser_halo.set_defaults(func=cmd_halo)
+
+    parser_diagnose = subparsers.add_parser(
+        'diagnose', help='Deep diagnostic analysis of a single spectra file')
+    parser_diagnose.add_argument('spectra_file', help='Path to spectra HDF5 file')
+    parser_diagnose.add_argument('-o', '--output-dir', type=str, default=None,
+                                help='Output directory (default: plots/diagnostics/)')
+    parser_diagnose.add_argument('--features', action='store_true',
+                                help='Extract and plot spectral features')
+    parser_diagnose.add_argument('--distribution', action='store_true',
+                                help='Detailed flux distribution analysis')
+    parser_diagnose.set_defaults(func=cmd_diagnose)
 
     parser_cgm = subparsers.add_parser(
         'cgm', help='Generate CGM-targeted spectra around halos')

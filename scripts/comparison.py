@@ -1,6 +1,8 @@
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
+import os
+from pathlib import Path
 from .analysis import (
     compute_flux_statistics,
     compute_effective_optical_depth,
@@ -10,6 +12,15 @@ from .analysis import (
     compute_temperature_density_relation,
 )
 from .plotting import save_plot
+from .statistical_tests import comprehensive_comparison, pairwise_comparison_matrix, format_test_results_table
+from .exploratory import (
+    extract_spectral_features,
+    compare_features,
+    compare_distributions,
+    compute_correlation_matrix,
+    spectra_clustering_analysis,
+    physics_regime_analysis
+)
 
 
 def load_spectra_results(spectra_file, velocity_spacing=0.1):
@@ -408,3 +419,380 @@ def track_redshift_evolution(spectra_files, labels=None, output_path=None):
         evolution['z_with_T'] = z_with_T.tolist()
     
     return evolution
+
+
+def compare_simulations_comprehensive(spectra_files, labels=None, output_dir=None, mode='detailed'):
+    """
+    Comprehensive comparison with multiple analysis modes.
+    mode: 'quick' (basic plots), 'detailed' (enhanced plots), 'full' (all analyses)
+    """
+    if labels is None:
+        labels = [f"Sim {i}" for i in range(len(spectra_files))]
+    
+    print(f"[COMPREHENSIVE COMPARISON - Mode: {mode}]")
+    print(f"Loading {len(spectra_files)} simulations...")
+    
+    all_results = []
+    all_tau_data = []
+    
+    for i, (fpath, label) in enumerate(zip(spectra_files, labels)):
+        results = load_spectra_results(fpath)
+        if results['success']:
+            results['label'] = label
+            all_results.append(results)
+            
+            # Load tau for deep analysis
+            if mode in ['detailed', 'full']:
+                with h5py.File(fpath, 'r') as f:
+                    if 'tau/H/1/1215' in f:
+                        all_tau_data.append(np.array(f['tau/H/1/1215']))
+        else:
+            print(f"  Skipping {label}: {results.get('error', 'unknown error')}")
+    
+    if len(all_results) == 0:
+        return None
+    
+    if output_dir is None:
+        output_dir = Path('plots/comparisons')
+    else:
+        output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Basic comparison plot (always generated)
+    compare_simulations(spectra_files, labels, output_path=output_dir / 'comparison_basic.png')
+    
+    if mode in ['detailed', 'full']:
+        print("\n[ENHANCED COMPARISON PLOTS]")
+        
+        # Enhanced comparison with box plots and sample spectra
+        _create_enhanced_comparison_plot(all_results, labels, all_tau_data, 
+                                        output_dir / 'comparison_enhanced.png')
+        
+        # Power spectrum ratios
+        _create_power_spectrum_ratio_plot(all_results, labels,
+                                         output_dir / 'power_spectrum_ratios.png')
+        
+        # Distribution comparison for flux
+        flux_data = [np.exp(-tau) for tau in all_tau_data]
+        compare_distributions(flux_data, labels, 
+                            output_dir / 'flux_distributions.png', 'Flux')
+        
+        # Statistical tests
+        print("\n[STATISTICAL TESTS]")
+        test_results = []
+        for i in range(len(all_results)):
+            for j in range(i + 1, len(all_results)):
+                from scripts.statistical_tests import comprehensive_comparison as comp_test
+                result = comp_test(flux_data[i], flux_data[j], 
+                                 labels[i], labels[j])
+                test_results.append(result)
+        
+        if test_results:
+            from scripts.statistical_tests import format_test_results_table
+            test_summary = format_test_results_table(test_results, correction='bonferroni')
+            with open(output_dir / 'statistical_tests.txt', 'w') as f:
+                f.write(test_summary)
+            print(test_summary[:500] + "...\n(Full results in statistical_tests.txt)")
+        
+        # Correlation matrices
+        compute_correlation_matrix(all_results, labels,
+                                  output_dir / 'correlation_matrices.png')
+    
+    if mode == 'full':
+        print("\n[FULL EXPLORATORY ANALYSIS]")
+        
+        # Feature extraction and comparison
+        print("Extracting spectral features...")
+        features_list = [extract_spectral_features(tau) for tau in all_tau_data]
+        compare_features(features_list, labels,
+                        output_dir / 'feature_comparison.png')
+        
+        # Physics regime analysis
+        physics_regime_analysis(all_results, labels,
+                              output_dir / 'physics_regimes.png')
+        
+        # Clustering analysis
+        print("Running PCA/t-SNE clustering...")
+        spectra_clustering_analysis(spectra_files, labels,
+                                   output_dir / 'spectra_clustering.png',
+                                   n_samples=500)
+        
+        # Pairwise comparison matrix
+        print("Computing pairwise comparison matrix...")
+        from scripts.statistical_tests import pairwise_comparison_matrix
+        matrix_result = pairwise_comparison_matrix(flux_data, labels, metric='ks')
+        _plot_pairwise_matrix(matrix_result, output_dir / 'pairwise_ks_matrix.png')
+    
+    print(f"\n[COMPLETE] All plots saved to {output_dir}/")
+    
+    return {
+        'n_simulations': len(all_results),
+        'labels': labels,
+        'results': all_results,
+        'output_dir': str(output_dir)
+    }
+
+
+def _create_enhanced_comparison_plot(all_results, labels, all_tau_data, output_path):
+    """Enhanced comparison with box plots, ratios, sample spectra, significance."""
+    n_sims = len(all_results)
+    fig = plt.figure(figsize=(20, 14))
+    gs = fig.add_gridspec(4, 3, hspace=0.4, wspace=0.4)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    
+    # Panel 1: Power spectrum (same as before)
+    ax = fig.add_subplot(gs[0, :])
+    for i, res in enumerate(all_results):
+        ps = res['power_spectrum']
+        k, P_k = ps['k'], ps['P_k_mean']
+        mask = k > 0
+        ax.loglog(k[mask], P_k[mask], 'o-', color=colors[i % len(colors)], 
+                 linewidth=2, markersize=3, label=f"{res['label']}", alpha=0.8)
+    ax.set_xlabel(r'$k$ [s/km]', fontsize=12)
+    ax.set_ylabel(r'$P_F(k)$ [km/s]', fontsize=12)
+    ax.set_title('Flux Power Spectrum', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9, ncol=2)
+    ax.grid(alpha=0.3)
+    
+    # Panel 2: τ_eff box plot
+    ax = fig.add_subplot(gs[1, 0])
+    tau_eff_data = [res['tau_eff']['tau_eff_per_sightline'] for res in all_results]
+    bp = ax.boxplot(tau_eff_data, labels=labels, patch_artist=True, showfliers=False)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_ylabel(r'$\tau_{\rm eff}$', fontsize=12)
+    ax.set_title('Optical Depth Distribution', fontsize=13, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 3: Flux box plot
+    ax = fig.add_subplot(gs[1, 1])
+    flux_data = [np.exp(-tau) for tau in all_tau_data]
+    bp = ax.boxplot([f.flatten()[:10000] for f in flux_data], labels=labels, patch_artist=True, showfliers=False)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_ylabel('Flux', fontsize=12)
+    ax.set_title('Flux Distribution', fontsize=13, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 4: Sample spectra (3 random per sim)
+    ax = fig.add_subplot(gs[1, 2])
+    for i, (tau, label) in enumerate(zip(all_tau_data, labels)):
+        n_sightlines = tau.shape[0]
+        n_pixels = tau.shape[1]
+        sample_idx = np.random.choice(n_sightlines, min(3, n_sightlines), replace=False)
+        
+        for idx in sample_idx:
+            flux = np.exp(-tau[idx])
+            v = np.arange(len(flux)) * 0.1
+            ax.plot(v[:2000], flux[:2000], alpha=0.4, linewidth=0.8, 
+                   color=colors[i % len(colors)])
+    
+    ax.set_xlabel('Velocity [km/s]', fontsize=10)
+    ax.set_ylabel('Flux', fontsize=10)
+    ax.set_title('Sample Spectra', fontsize=13, fontweight='bold')
+    ax.set_xlim(0, 200)
+    ax.grid(alpha=0.3)
+    
+    # Panel 5: Power spectrum ratio (ref = first sim)
+    ax = fig.add_subplot(gs[2, 0])
+    ref_ps = all_results[0]['power_spectrum']
+    for i in range(1, n_sims):
+        ps = all_results[i]['power_spectrum']
+        k = ps['k']
+        mask = (k > 0) & (ref_ps['P_k_mean'] > 0)
+        ratio = ps['P_k_mean'][mask] / ref_ps['P_k_mean'][mask]
+        ax.semilogx(k[mask], ratio, 'o-', label=f"{labels[i]}/{labels[0]}", 
+                   markersize=3, linewidth=1.5, color=colors[i % len(colors)])
+    ax.axhline(1, color='k', linestyle='--', alpha=0.5)
+    ax.set_xlabel(r'$k$ [s/km]', fontsize=11)
+    ax.set_ylabel('Power Ratio', fontsize=11)
+    ax.set_title('Power Spectrum Ratios', fontsize=12, fontweight='bold')
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    
+    # Panel 6: CDDF comparison
+    ax = fig.add_subplot(gs[2, 1])
+    for i, res in enumerate(all_results):
+        cddf = res['cddf']
+        if cddf['n_absorbers'] > 0:
+            log_N = np.log10(cddf['bin_centers'])
+            counts = cddf['counts']
+            mask = counts > 0
+            if np.any(mask):
+                ax.plot(log_N[mask], counts[mask], 'o-', label=labels[i],
+                       color=colors[i % len(colors)], alpha=0.7, markersize=4)
+    ax.set_xlabel(r'$\log_{10}(N_{\rm HI})$', fontsize=11)
+    ax.set_ylabel('Counts', fontsize=11)
+    ax.set_yscale('log')
+    ax.set_title('Column Density Distribution', fontsize=12, fontweight='bold')
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    
+    # Panel 7: Absorption fractions
+    ax = fig.add_subplot(gs[2, 2])
+    x = np.arange(n_sims)
+    sat_fracs = [res['flux_stats']['deep_absorption_frac'] * 100 for res in all_results]
+    mod_fracs = [res['flux_stats']['moderate_absorption_frac'] * 100 for res in all_results]
+    weak_fracs = [res['flux_stats']['weak_absorption_frac'] * 100 for res in all_results]
+    
+    width = 0.25
+    ax.bar(x - width, sat_fracs, width, label='Deep', color='darkred', alpha=0.7)
+    ax.bar(x, mod_fracs, width, label='Moderate', color='orange', alpha=0.7)
+    ax.bar(x + width, weak_fracs, width, label='Weak', color='green', alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel('Pixel Fraction [%]', fontsize=11)
+    ax.set_title('Absorption Regimes', fontsize=12, fontweight='bold')
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 8: Mean statistics comparison
+    ax = fig.add_subplot(gs[3, 0])
+    mean_tau = [res['flux_stats']['mean_tau'] for res in all_results]
+    mean_flux = [res['flux_stats']['mean_flux'] for res in all_results]
+    ax2 = ax.twinx()
+    
+    ax.bar(x - 0.2, mean_tau, 0.4, label=r'$\langle\tau\rangle$', color='steelblue', alpha=0.7)
+    ax2.bar(x + 0.2, mean_flux, 0.4, label=r'$\langle F\rangle$', color='coral', alpha=0.7)
+    
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel(r'$\langle\tau\rangle$', color='steelblue', fontsize=11)
+    ax2.set_ylabel(r'$\langle F\rangle$', color='coral', fontsize=11)
+    ax.tick_params(axis='y', labelcolor='steelblue')
+    ax2.tick_params(axis='y', labelcolor='coral')
+    ax.set_title('Mean Statistics', fontsize=12, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 9: Variance comparison
+    ax = fig.add_subplot(gs[3, 1])
+    std_tau = [res['tau_eff']['tau_eff_std'] for res in all_results]
+    std_flux = [res['flux_stats']['std_flux'] for res in all_results]
+    ax2 = ax.twinx()
+    
+    ax.bar(x - 0.2, std_tau, 0.4, label=r'$\sigma_\tau$', color='steelblue', alpha=0.7)
+    ax2.bar(x + 0.2, std_flux, 0.4, label=r'$\sigma_F$', color='coral', alpha=0.7)
+    
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel(r'$\sigma_\tau$', color='steelblue', fontsize=11)
+    ax2.set_ylabel(r'$\sigma_F$', color='coral', fontsize=11)
+    ax.tick_params(axis='y', labelcolor='steelblue')
+    ax2.tick_params(axis='y', labelcolor='coral')
+    ax.set_title('Variability', fontsize=12, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 10: Summary table
+    ax = fig.add_subplot(gs[3, 2])
+    ax.axis('off')
+    
+    summary_text = "Key Statistics:\n" + "=" * 35 + "\n"
+    for i, (res, label) in enumerate(zip(all_results, labels)):
+        summary_text += f"\n{label}:\n"
+        summary_text += f"  τ_eff: {res['tau_eff']['tau_eff']:.4f}\n"
+        summary_text += f"  <F>: {res['flux_stats']['mean_flux']:.4f}\n"
+        summary_text += f"  N_abs: {res['cddf']['n_absorbers']}\n"
+    
+    ax.text(0.05, 0.95, summary_text, transform=ax.transAxes, 
+           fontsize=8, verticalalignment='top', fontfamily='monospace')
+    
+    fig.suptitle('Enhanced Simulation Comparison', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _create_power_spectrum_ratio_plot(all_results, labels, output_path):
+    """Create detailed power spectrum ratio plot."""
+    n_sims = len(all_results)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    
+    # Absolute power spectra
+    ax = axes[0]
+    for i, res in enumerate(all_results):
+        ps = res['power_spectrum']
+        k, P_k, P_k_err = ps['k'], ps['P_k_mean'], ps['P_k_err']
+        mask = k > 0
+        ax.loglog(k[mask], P_k[mask], 'o-', color=colors[i % len(colors)],
+                 linewidth=2, markersize=3, label=labels[i], alpha=0.8)
+        ax.fill_between(k[mask], P_k[mask] - P_k_err[mask], 
+                       P_k[mask] + P_k_err[mask], 
+                       alpha=0.15, color=colors[i % len(colors)])
+    ax.set_xlabel(r'$k$ [s/km]', fontsize=12)
+    ax.set_ylabel(r'$P_F(k)$ [km/s]', fontsize=12)
+    ax.set_title('Power Spectra', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    
+    # Ratios relative to first
+    ax = axes[1]
+    ref_ps = all_results[0]['power_spectrum']
+    for i in range(1, n_sims):
+        ps = all_results[i]['power_spectrum']
+        k = ps['k']
+        mask = (k > 0) & (ref_ps['P_k_mean'] > 0)
+        ratio = ps['P_k_mean'][mask] / ref_ps['P_k_mean'][mask]
+        ax.semilogx(k[mask], ratio, 'o-', label=f"{labels[i]}/{labels[0]}",
+                   markersize=4, linewidth=2, color=colors[i % len(colors)])
+    ax.axhline(1, color='k', linestyle='--', alpha=0.5, linewidth=2)
+    ax.set_xlabel(r'$k$ [s/km]', fontsize=12)
+    ax.set_ylabel(r'$P_F(k) / P_F^{\rm ref}(k)$', fontsize=12)
+    ax.set_title(f'Power Ratios (ref: {labels[0]})', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _plot_pairwise_matrix(matrix_result, output_path):
+    """Plot pairwise comparison matrix."""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    matrix = matrix_result['matrix']
+    pvalue_matrix = matrix_result['pvalue_matrix']
+    labels = matrix_result['labels']
+    
+    # Statistic matrix
+    im1 = axes[0].imshow(matrix, cmap='viridis', aspect='auto')
+    axes[0].set_xticks(np.arange(len(labels)))
+    axes[0].set_yticks(np.arange(len(labels)))
+    axes[0].set_xticklabels(labels, rotation=45, ha='right')
+    axes[0].set_yticklabels(labels)
+    axes[0].set_title(f'{matrix_result["metric"].upper()} Test Statistic')
+    
+    for i in range(len(labels)):
+        for j in range(len(labels)):
+            text = axes[0].text(j, i, f'{matrix[i, j]:.3f}',
+                              ha='center', va='center', fontsize=9)
+    
+    plt.colorbar(im1, ax=axes[0])
+    
+    # P-value matrix
+    im2 = axes[1].imshow(np.log10(pvalue_matrix + 1e-100), cmap='RdYlGn', aspect='auto', vmin=-10, vmax=0)
+    axes[1].set_xticks(np.arange(len(labels)))
+    axes[1].set_yticks(np.arange(len(labels)))
+    axes[1].set_xticklabels(labels, rotation=45, ha='right')
+    axes[1].set_yticklabels(labels)
+    axes[1].set_title('p-values (log10 scale)')
+    
+    for i in range(len(labels)):
+        for j in range(len(labels)):
+            if i != j:
+                sig = '***' if pvalue_matrix[i, j] < 0.001 else ('**' if pvalue_matrix[i, j] < 0.01 else ('*' if pvalue_matrix[i, j] < 0.05 else ''))
+                text = axes[1].text(j, i, sig, ha='center', va='center', 
+                                  fontsize=14, fontweight='bold', color='red')
+    
+    plt.colorbar(im2, ax=axes[1], label='log10(p-value)')
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
