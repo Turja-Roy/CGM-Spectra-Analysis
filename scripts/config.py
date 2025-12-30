@@ -130,20 +130,37 @@ def get_available_snapshots(suite='IllustrisTNG', sim_set='LH', sim_num='0'):
     return snapshots
 
 
-def extract_simulation_info(snapshot_path):
-    snapshot_path = Path(snapshot_path)
-    parts = snapshot_path.parts
+def extract_simulation_info(filepath):
+    filepath = Path(filepath)
+    parts = filepath.parts
     
-    if len(parts) >= 4:
-        suite = parts[-4]
-        sim_set = parts[-3]
-        sim_name = parts[-2]
+    if 'spectra' in parts:
+        spectra_idx = parts.index('spectra')
+        suite = parts[spectra_idx + 1] if spectra_idx + 1 < len(parts) else 'Unknown'
+        sim_set = parts[spectra_idx + 2] if spectra_idx + 2 < len(parts) else 'Unknown'
+        sim_name = parts[spectra_idx + 3] if spectra_idx + 3 < len(parts) else 'Unknown'
+        
+        stem = filepath.stem
+        if 'snap_' in stem:
+            snap_parts = stem.split('snap_')
+            if len(snap_parts) > 1:
+                snap_num = snap_parts[1].split('_')[0]
+            else:
+                snap_num = 'unknown'
+        else:
+            snap_num = 'unknown'
+    
+    elif 'data' in parts or len(parts) >= 4:
+        suite = parts[-4] if len(parts) >= 4 else 'Unknown'
+        sim_set = parts[-3] if len(parts) >= 3 else 'Unknown'
+        sim_name = parts[-2] if len(parts) >= 2 else 'Unknown'
+        snap_num = filepath.stem.split('_')[-1]
+    
     else:
         suite = 'Unknown'
         sim_set = 'Unknown'
         sim_name = 'Unknown'
-    
-    snap_num = snapshot_path.stem.split('_')[-1]
+        snap_num = 'unknown'
     
     return {
         'suite': suite,
@@ -353,6 +370,11 @@ def get_plot_output_name(snapshot_path, plot_type, extension='png'):
     info = extract_simulation_info(snapshot_path)
     
     plot_dir = PLOTS_DIR / info['suite'] / info['sim_set'] / info['sim_name']
+    
+    # If this is a CGM spectra file, add cgm subdirectory
+    if 'cgm' in snapshot_path.parts:
+        plot_dir = plot_dir / 'cgm'
+    
     plot_dir.mkdir(exist_ok=True, parents=True)
     
     filename = f"camel_{plot_type}_snap_{info['snap_num']}.{extension}"
