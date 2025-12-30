@@ -18,8 +18,9 @@ def cmd_compare(args):
             return 1
 
     # Default output path
-    output_path = args.output if args.output else config.PLOTS_DIR / \
-        "simulation_comparison.png"
+    comparisons_dir = config.PLOTS_DIR / 'comparisons'
+    comparisons_dir.mkdir(parents=True, exist_ok=True)
+    output_path = args.output if args.output else comparisons_dir / "simulation_comparison.png"
 
     # Run comparison
     try:
@@ -68,7 +69,9 @@ def cmd_evolve(args):
             return 1
 
     # Default output path
-    output_path = args.output if args.output else config.PLOTS_DIR / "redshift_evolution.png"
+    comparisons_dir = config.PLOTS_DIR / 'comparisons'
+    comparisons_dir.mkdir(parents=True, exist_ok=True)
+    output_path = args.output if args.output else comparisons_dir / "redshift_evolution.png"
 
     # Run evolution tracking
     try:

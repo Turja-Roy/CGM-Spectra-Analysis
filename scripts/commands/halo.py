@@ -41,13 +41,8 @@ def cmd_halo(args):
     
     # Setup output directory
     if output_dir is None:
-        snapshot_path = Path(snapshot_file)
-        # Extract simulation name from path
-        if len(snapshot_path.parts) >= 2:
-            sim_name = snapshot_path.parts[-2]
-        else:
-            sim_name = 'unknown'
-        output_dir = config.PLOTS_DIR / sim_name / 'halos'
+        info = config.extract_simulation_info(snapshot_file)
+        output_dir = config.PLOTS_DIR / info['suite'] / info['sim_set'] / info['sim_name'] / 'halos'
     else:
         output_dir = Path(output_dir)
     

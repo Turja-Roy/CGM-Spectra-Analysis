@@ -349,29 +349,15 @@ def get_snapshot_output_name(snapshot_path, lines=None, num_sightlines=None):
 # Generate standard plot filename
 def get_plot_output_name(snapshot_path, plot_type, extension='png'):
     snapshot_path = Path(snapshot_path)
-
-    # Extract simulation set and number from path
-    sim_name = None
-    if len(snapshot_path.parts) >= 2:
-        sim_name = snapshot_path.parts[-2]
     
-    # Extract snapshot number
-    snap_num = 'unknown'
-    parts = snapshot_path.stem.split('_')
-    for i, part in enumerate(parts):
-        if part == 'snap' and i + 1 < len(parts):
-            snap_num = parts[i + 1]
-            break
-
-    filename = f"camel_{plot_type}_snap_{snap_num}.{extension}"
-
-    # Create subdirectory for this simulation
-    if sim_name:
-        plot_subdir = PLOTS_DIR / sim_name
-        plot_subdir.mkdir(exist_ok=True, parents=True)
-        return plot_subdir / filename
-    else:
-        return PLOTS_DIR / filename
+    info = extract_simulation_info(snapshot_path)
+    
+    plot_dir = PLOTS_DIR / info['suite'] / info['sim_set'] / info['sim_name']
+    plot_dir.mkdir(exist_ok=True, parents=True)
+    
+    filename = f"camel_{plot_type}_snap_{info['snap_num']}.{extension}"
+    
+    return plot_dir / filename
 
 
 def print_config_summary():
