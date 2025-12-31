@@ -425,6 +425,8 @@ def compare_simulations_comprehensive(spectra_files, labels=None, output_dir=Non
     """
     Comprehensive comparison with multiple analysis modes.
     mode: 'quick' (basic plots), 'detailed' (enhanced plots), 'full' (all analyses)
+    
+    Uses memory-efficient lazy loading to handle large datasets.
     """
     if labels is None:
         labels = [f"Sim {i}" for i in range(len(spectra_files))]
@@ -433,19 +435,16 @@ def compare_simulations_comprehensive(spectra_files, labels=None, output_dir=Non
     print(f"Loading {len(spectra_files)} simulations...")
     
     all_results = []
-    all_tau_data = []
+    valid_files = []
+    valid_labels = []
     
     for i, (fpath, label) in enumerate(zip(spectra_files, labels)):
         results = load_spectra_results(fpath)
         if results['success']:
             results['label'] = label
             all_results.append(results)
-            
-            # Load tau for deep analysis
-            if mode in ['detailed', 'full']:
-                with h5py.File(fpath, 'r') as f:
-                    if 'tau/H/1/1215' in f:
-                        all_tau_data.append(np.array(f['tau/H/1/1215']))
+            valid_files.append(fpath)
+            valid_labels.append(label)
         else:
             print(f"  Skipping {label}: {results.get('error', 'unknown error')}")
     
@@ -459,32 +458,35 @@ def compare_simulations_comprehensive(spectra_files, labels=None, output_dir=Non
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Basic comparison plot (always generated)
-    compare_simulations(spectra_files, labels, output_path=output_dir / 'comparison_basic.png')
+    compare_simulations(valid_files, valid_labels, output_path=output_dir / 'comparison_basic.png')
     
     if mode in ['detailed', 'full']:
         print("\n[ENHANCED COMPARISON PLOTS]")
         
-        # Enhanced comparison with box plots and sample spectra
-        _create_enhanced_comparison_plot(all_results, labels, all_tau_data, 
-                                        output_dir / 'comparison_enhanced.png')
+        # Enhanced comparison with box plots and sample spectra (lazy loaded)
+        _create_enhanced_comparison_plot_lazy(all_results, valid_labels, valid_files, 
+                                             output_dir / 'comparison_enhanced.png')
         
         # Power spectrum ratios
-        _create_power_spectrum_ratio_plot(all_results, labels,
+        _create_power_spectrum_ratio_plot(all_results, valid_labels,
                                          output_dir / 'power_spectrum_ratios.png')
         
-        # Distribution comparison for flux
-        flux_data = [np.exp(-tau) for tau in all_tau_data]
-        compare_distributions(flux_data, labels, 
-                            output_dir / 'flux_distributions.png', 'Flux')
+        # Distribution comparison for flux (chunked processing)
+        print("Comparing flux distributions (chunked processing)...")
+        compare_distributions_lazy(valid_files, valid_labels, 
+                                  output_dir / 'flux_distributions.png', 'Flux')
         
-        # Statistical tests
+        # Statistical tests (streaming)
         print("\n[STATISTICAL TESTS]")
         test_results = []
         for i in range(len(all_results)):
             for j in range(i + 1, len(all_results)):
                 from scripts.statistical_tests import comprehensive_comparison as comp_test
-                result = comp_test(flux_data[i], flux_data[j], 
-                                 labels[i], labels[j])
+                # Load flux data in chunks for statistical tests
+                flux_i = _load_flux_chunked(valid_files[i], max_samples=100000)
+                flux_j = _load_flux_chunked(valid_files[j], max_samples=100000)
+                result = comp_test(flux_i, flux_j, 
+                                 valid_labels[i], valid_labels[j])
                 test_results.append(result)
         
         if test_results:
@@ -495,32 +497,33 @@ def compare_simulations_comprehensive(spectra_files, labels=None, output_dir=Non
             print(test_summary[:500] + "...\n(Full results in statistical_tests.txt)")
         
         # Correlation matrices
-        compute_correlation_matrix(all_results, labels,
+        compute_correlation_matrix(all_results, valid_labels,
                                   output_dir / 'correlation_matrices.png')
     
     if mode == 'full':
         print("\n[FULL EXPLORATORY ANALYSIS]")
         
-        # Feature extraction and comparison
-        print("Extracting spectral features...")
-        features_list = [extract_spectral_features(tau) for tau in all_tau_data]
-        compare_features(features_list, labels,
+        # Feature extraction and comparison (chunked)
+        print("Extracting spectral features (chunked processing)...")
+        features_list = [extract_spectral_features_chunked(fpath) for fpath in valid_files]
+        compare_features(features_list, valid_labels,
                         output_dir / 'feature_comparison.png')
         
         # Physics regime analysis
-        physics_regime_analysis(all_results, labels,
+        physics_regime_analysis(all_results, valid_labels,
                               output_dir / 'physics_regimes.png')
         
         # Clustering analysis
         print("Running PCA/t-SNE clustering...")
-        spectra_clustering_analysis(spectra_files, labels,
+        spectra_clustering_analysis(valid_files, valid_labels,
                                    output_dir / 'spectra_clustering.png',
                                    n_samples=500)
         
-        # Pairwise comparison matrix
+        # Pairwise comparison matrix (streaming)
         print("Computing pairwise comparison matrix...")
         from scripts.statistical_tests import pairwise_comparison_matrix
-        matrix_result = pairwise_comparison_matrix(flux_data, labels, metric='ks')
+        flux_data_samples = [_load_flux_chunked(f, max_samples=50000) for f in valid_files]
+        matrix_result = pairwise_comparison_matrix(flux_data_samples, valid_labels, metric='ks')
         _plot_pairwise_matrix(matrix_result, output_dir / 'pairwise_ks_matrix.png')
     
     print(f"\n[COMPLETE] All plots saved to {output_dir}/")
@@ -796,3 +799,258 @@ def _plot_pairwise_matrix(matrix_result, output_path):
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
 
+
+
+def _load_flux_chunked(filepath, max_samples=100000, chunk_size=1000):
+    """
+    Load flux data in chunks to avoid memory issues.
+    Returns a flattened sample of flux values (max_samples total).
+    """
+    with h5py.File(filepath, 'r') as f:
+        if 'tau/H/1/1215' in f:
+            tau_dataset = f['tau/H/1/1215']
+            n_sightlines, n_pixels = tau_dataset.shape
+            total_pixels = n_sightlines * n_pixels
+            
+            # Calculate stride to get approximately max_samples
+            stride = max(1, total_pixels // max_samples)
+            
+            flux_samples = []
+            for i in range(0, n_sightlines, chunk_size):
+                chunk_end = min(i + chunk_size, n_sightlines)
+                tau_chunk = tau_dataset[i:chunk_end, ::stride]
+                flux_chunk = np.exp(-tau_chunk)
+                flux_samples.append(flux_chunk.flatten())
+                
+                # Stop if we have enough samples
+                if len(flux_samples) * flux_chunk.size >= max_samples:
+                    break
+            
+            flux = np.concatenate(flux_samples)
+            # Randomly sample to exact size if we have more
+            if len(flux) > max_samples:
+                indices = np.random.choice(len(flux), max_samples, replace=False)
+                flux = flux[indices]
+            
+            return flux
+    
+    return np.array([])
+
+
+def _load_tau_chunked(filepath, chunk_size=1000):
+    """
+    Generator that yields chunks of tau data.
+    Use this for processing that can be done incrementally.
+    """
+    with h5py.File(filepath, 'r') as f:
+        if 'tau/H/1/1215' in f:
+            tau_dataset = f['tau/H/1/1215']
+            n_sightlines = tau_dataset.shape[0]
+            
+            for i in range(0, n_sightlines, chunk_size):
+                chunk_end = min(i + chunk_size, n_sightlines)
+                yield tau_dataset[i:chunk_end]
+
+
+def extract_spectral_features_chunked(filepath, chunk_size=1000):
+    """
+    Extract spectral features using chunked processing to save memory.
+    """
+    from scripts.exploratory import extract_spectral_features
+    
+    with h5py.File(filepath, 'r') as f:
+        if 'tau/H/1/1215' not in f:
+            return {}
+        
+        tau_dataset = f['tau/H/1/1215']
+        n_sightlines, n_pixels = tau_dataset.shape
+        
+        # Process in chunks and accumulate features
+        all_features = []
+        for i in range(0, n_sightlines, chunk_size):
+            chunk_end = min(i + chunk_size, n_sightlines)
+            tau_chunk = np.array(tau_dataset[i:chunk_end])
+            features_chunk = extract_spectral_features(tau_chunk)
+            all_features.append(features_chunk)
+        
+        # Merge features from all chunks
+        merged = {}
+        
+        # For arrays, concatenate
+        for key in ['void_sizes', 'line_widths', 'absorber_separations']:
+            if key in all_features[0]:
+                merged[key] = np.concatenate([f[key] for f in all_features if key in f and len(f[key]) > 0])
+        
+        # For scalars, take weighted average or sum
+        scalar_keys = ['saturation_fraction', 'deep_absorption_fraction', 'transmission_fraction',
+                      'flux_mean', 'flux_variance', 'flux_skewness', 'flux_kurtosis']
+        
+        for key in scalar_keys:
+            if key in all_features[0]:
+                merged[key] = float(np.mean([f[key] for f in all_features if key in f]))
+        
+        # Recompute mean/median from merged arrays
+        if 'void_sizes' in merged and len(merged['void_sizes']) > 0:
+            merged['mean_void_size'] = float(np.mean(merged['void_sizes']))
+            merged['median_void_size'] = float(np.median(merged['void_sizes']))
+        
+        if 'line_widths' in merged and len(merged['line_widths']) > 0:
+            merged['mean_line_width'] = float(np.mean(merged['line_widths']))
+            merged['median_line_width'] = float(np.median(merged['line_widths']))
+        
+        if 'absorber_separations' in merged and len(merged['absorber_separations']) > 0:
+            merged['mean_absorber_separation'] = float(np.mean(merged['absorber_separations']))
+        else:
+            merged['mean_absorber_separation'] = 0.0
+        
+        return merged
+
+
+def _create_enhanced_comparison_plot_lazy(all_results, labels, filepaths, output_path):
+    """
+    Enhanced comparison plot using lazy loading to avoid loading all data at once.
+    Loads only what's needed for each panel.
+    """
+    n_sims = len(all_results)
+    fig = plt.figure(figsize=(20, 14))
+    gs = fig.add_gridspec(4, 3, hspace=0.4, wspace=0.4)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    
+    # Panel 1: Power spectrum
+    ax = fig.add_subplot(gs[0, :])
+    for i, res in enumerate(all_results):
+        ps = res['power_spectrum']
+        k, P_k = ps['k'], ps['P_k_mean']
+        mask = k > 0
+        ax.loglog(k[mask], P_k[mask], 'o-', color=colors[i % len(colors)], 
+                 linewidth=2, markersize=3, label=f"{res['label']}", alpha=0.8)
+    ax.set_xlabel(r'$k$ [s/km]', fontsize=12)
+    ax.set_ylabel(r'$P_F(k)$ [km/s]', fontsize=12)
+    ax.set_title('Flux Power Spectrum', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9, ncol=2)
+    ax.grid(alpha=0.3)
+    
+    # Panel 2: τ_eff box plot
+    ax = fig.add_subplot(gs[1, 0])
+    tau_eff_data = [res['tau_eff']['tau_eff_per_sightline'] for res in all_results]
+    bp = ax.boxplot(tau_eff_data, labels=labels, patch_artist=True, showfliers=False)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_ylabel(r'$\tau_{\rm eff}$', fontsize=12)
+    ax.set_title('Optical Depth Distribution', fontsize=13, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 3: Flux box plot (load only sample for visualization)
+    ax = fig.add_subplot(gs[1, 1])
+    flux_samples = []
+    for fpath in filepaths:
+        flux_sample = _load_flux_chunked(fpath, max_samples=10000)
+        flux_samples.append(flux_sample)
+    
+    bp = ax.boxplot(flux_samples, labels=labels, patch_artist=True, showfliers=False)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_ylabel('Flux', fontsize=12)
+    ax.set_title('Flux Distribution', fontsize=13, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 4: CDDF
+    ax = fig.add_subplot(gs[1, 2])
+    for i, res in enumerate(all_results):
+        cddf = res['cddf']
+        if cddf['n_absorbers'] > 0:
+            log_N = np.log10(cddf['bin_centers'])
+            counts = cddf['counts']
+            mask = counts > 0
+            if np.any(mask):
+                ax.semilogy(log_N[mask], counts[mask], 'o-', color=colors[i % len(colors)],
+                           linewidth=2, markersize=4, label=labels[i], alpha=0.8)
+    ax.set_xlabel(r'$\log_{10}(N_{\rm HI}$ [cm$^{-2}$])', fontsize=12)
+    ax.set_ylabel('Counts', fontsize=12)
+    ax.set_title('Column Density Distribution', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    
+    # Panel 5: Sample spectra (load one spectrum per simulation)
+    ax = fig.add_subplot(gs[2, :])
+    for i, fpath in enumerate(filepaths):
+        with h5py.File(fpath, 'r') as f:
+            if 'tau/H/1/1215' in f:
+                # Load just one spectrum
+                tau_single = np.array(f['tau/H/1/1215'][0, :])
+                flux_single = np.exp(-tau_single)
+                vel = np.arange(len(flux_single)) * 0.1  # km/s
+                ax.plot(vel, flux_single, color=colors[i % len(colors)],
+                       linewidth=1.5, label=labels[i], alpha=0.8)
+    
+    ax.set_xlabel('Velocity [km/s]', fontsize=12)
+    ax.set_ylabel('Flux', fontsize=12)
+    ax.set_title('Sample Spectra (first sightline)', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9, ncol=2)
+    ax.grid(alpha=0.3)
+    ax.set_ylim(-0.05, 1.1)
+    
+    # Panel 6: Mean flux vs z (if available)
+    ax = fig.add_subplot(gs[3, 0])
+    mean_fluxes = [res['flux_stats']['mean_flux'] for res in all_results]
+    redshifts = [res['redshift'] for res in all_results]
+    x = np.arange(n_sims)
+    ax.bar(x, mean_fluxes, color=[colors[i % len(colors)] for i in range(n_sims)], alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_ylabel('Mean Flux', fontsize=12)
+    ax.set_title('Mean Flux Comparison', fontsize=13, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 7: τ_eff comparison
+    ax = fig.add_subplot(gs[3, 1])
+    tau_eff_means = [res['tau_eff']['tau_eff'] for res in all_results]
+    ax.bar(x, tau_eff_means, color=[colors[i % len(colors)] for i in range(n_sims)], alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_ylabel(r'$\langle\tau_{\rm eff}\rangle$', fontsize=12)
+    ax.set_title('Mean Effective Optical Depth', fontsize=13, fontweight='bold')
+    ax.grid(alpha=0.3, axis='y')
+    
+    # Panel 8: Summary statistics text
+    ax = fig.add_subplot(gs[3, 2])
+    ax.axis('off')
+    summary_text = "Summary Statistics\n" + "="*30 + "\n"
+    for i, res in enumerate(all_results):
+        summary_text += f"\n{labels[i]}:\n"
+        summary_text += f"  z: {res['redshift']:.3f}\n"
+        summary_text += f"  N_los: {res['n_sightlines']}\n"
+        summary_text += f"  <F>: {res['flux_stats']['mean_flux']:.4f}\n"
+        summary_text += f"  τ_eff: {res['tau_eff']['tau_eff']:.3f}\n"
+        summary_text += f"  N_abs: {res['cddf']['n_absorbers']}\n"
+    
+    ax.text(0.05, 0.95, summary_text, transform=ax.transAxes, 
+           fontsize=8, verticalalignment='top', fontfamily='monospace')
+    
+    fig.suptitle('Enhanced Simulation Comparison', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def compare_distributions_lazy(filepaths, labels, output_path=None, quantity_name='Flux', 
+                               max_samples_per_sim=50000):
+    """
+    Compare distributions using lazy loading to avoid memory issues.
+    Loads samples from each file rather than entire datasets.
+    """
+    from scripts.exploratory import compare_distributions
+    
+    # Load sampled data
+    flux_samples = []
+    for fpath in filepaths:
+        flux = _load_flux_chunked(fpath, max_samples=max_samples_per_sim)
+        flux_samples.append(flux.reshape(-1, 1))  # Reshape to 2D for compare_distributions
+    
+    # Use existing compare_distributions function
+    compare_distributions(flux_samples, labels, output_path, quantity_name)
