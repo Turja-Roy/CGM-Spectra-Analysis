@@ -213,9 +213,9 @@ def _compute_rvir(mass, redshift, hubble, omega_m, omega_lambda):
     return r_vir_comoving
 
 
-# ========================= #
-# HALO FILTERING            #
-# ========================= #
+# ============== #
+# HALO FILTERING #
+# ============== #
 
 def filter_halos_by_mass(catalog, mass_range, mass_type='mass_total'):
     if mass_type not in catalog.columns:

@@ -19,21 +19,6 @@ def show_progress(block_num, block_size, total_size):
 
 
 def download_with_wget(url, dest):
-    """
-    Download using wget (preferred on HPC clusters).
-    
-    Parameters
-    ----------
-    url : str
-        URL to download from
-    dest : str
-        Destination file path
-        
-    Returns
-    -------
-    bool
-        True if download successful, False otherwise
-    """
     try:
         # Use wget with:
         # --no-check-certificate: Skip SSL verification (trusted source)
@@ -55,32 +40,6 @@ def download_with_wget(url, dest):
 
 
 def download(suite, sim_set, sim_name, snapshot, dest, file_type='snapshot'):
-    """
-    Download CAMELS data via HTTP with progress bar.
-    
-    Uses wget (preferred on HPC) with urllib fallback.
-    
-    Parameters
-    ----------
-    suite : str
-        Simulation suite (IllustrisTNG, SIMBA)
-    sim_set : str
-        Simulation set (LH, 1P, CV)
-    sim_name : str
-        Simulation name (e.g., LH_0)
-    snapshot : int
-        Snapshot number
-    dest : str
-        Destination file path
-    file_type : str
-        Type of file: 'snapshot' or 'groups'
-        
-    Returns
-    -------
-    bool
-        True if download successful
-    """
-    
     if file_type == 'snapshot':
         url = f"{BASE_URL}/{suite}/{sim_set}/{sim_name}/snapshot_{snapshot:03d}.hdf5"
     elif file_type == 'groups':
@@ -128,21 +87,6 @@ def download(suite, sim_set, sim_name, snapshot, dest, file_type='snapshot'):
 
 
 def download_groups_for_snapshot(snapshot_path):
-    """
-    Download group catalog corresponding to a snapshot file.
-    
-    Attempts to infer the URL from the snapshot file path and name.
-    
-    Parameters
-    ----------
-    snapshot_path : str
-        Path to snapshot file (e.g., data/IllustrisTNG/LH/LH_80/snap_080.hdf5)
-        
-    Returns
-    -------
-    bool
-        True if download successful
-    """
     from pathlib import Path
     
     snapshot_path = Path(snapshot_path)
