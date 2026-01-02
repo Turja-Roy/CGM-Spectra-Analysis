@@ -134,8 +134,15 @@ def main():
         description="Download CAMELS simulation data",
         epilog="""
 Examples:
-  # Download snapshot
+  # Download LH simulation snapshot
   python downloader.py --suite IllustrisTNG --set LH --sim 80 --snapshot 80
+  
+  # Download 1P baseline simulation
+  python downloader.py --suite IllustrisTNG --set 1P --sim 0 --snapshot 82
+  
+  # Download 1P parameter variation
+  python downloader.py --suite IllustrisTNG --set 1P --sim p11_2 --snapshot 82
+  python downloader.py --suite IllustrisTNG --set 1P --sim p15_n1 --snapshot 80
   
   # Download group catalog for existing snapshot
   python downloader.py --groups data/IllustrisTNG/LH/LH_80/snap_080.hdf5
@@ -143,7 +150,8 @@ Examples:
     )
     parser.add_argument('--suite', default='IllustrisTNG', choices=['IllustrisTNG', 'SIMBA'])
     parser.add_argument('--set', dest='sim_set', default='LH', choices=['LH', '1P', 'CV'])
-    parser.add_argument('--sim', type=int, default=0)
+    parser.add_argument('--sim', type=str, default='0',
+                       help='Simulation identifier (e.g., "80" for LH_80, "p11_2" for 1P_p11_2, "0" for baseline)')
     parser.add_argument('--snapshot', type=int, default=14)
     parser.add_argument('--output', '-o', help='Output path')
     parser.add_argument('--groups', help='Download group catalog for existing snapshot file')
@@ -158,7 +166,13 @@ Examples:
         return 0 if success else 1
     
     # Otherwise, download specified file
-    sim_name = f"{args.sim_set}_{args.sim}"
+    # Smart construction based on sim_set to handle different naming conventions
+    # For LH/CV: "80" -> "LH_80" or "CV_80"
+    # For 1P: "0" -> "1P_0", "p11_2" -> "1P_p11_2"
+    if args.sim_set == '1P':
+        sim_name = f"1P_{args.sim}"
+    else:
+        sim_name = f"{args.sim_set}_{args.sim}"
     
     if args.type == 'snapshot':
         dest = args.output or f"data/{args.suite}/{args.sim_set}/{sim_name}/snap_{args.snapshot:03d}.hdf5"

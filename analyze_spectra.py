@@ -28,14 +28,25 @@ Examples:
   # Explore HDF5 file
   python analyze_spectra.py explore data/.../camel_lya_spectra_snap_080.hdf5
 
-  # Generate spectra
-  python analyze_spectra.py generate data/snap_080.hdf5 -n 200
+  # Generate spectra from LH simulation
+  python analyze_spectra.py generate data/IllustrisTNG/LH/LH_80/snap_080.hdf5 -n 200
+
+  # Generate spectra from 1P simulation
+  python analyze_spectra.py generate data/IllustrisTNG/1P/1P_p11_2/snap_082.hdf5 -n 200
+  python analyze_spectra.py generate data/IllustrisTNG/1P/1P_0/snap_082.hdf5 -n 200
 
   # Analyze existing spectra
   python analyze_spectra.py analyze data/.../camel_lya_spectra_snap_080.hdf5
 
   # Compare multiple simulations (same redshift, different physics parameters)
   python analyze_spectra.py compare file1.hdf5 file2.hdf5 file3.hdf5 -l "LH_0,LH_80,LH_832"
+  
+  # Compare 1P parameter variations
+  python analyze_spectra.py compare \
+    spectra/.../1P_0/camel_lya_spectra_snap_082.hdf5 \
+    spectra/.../1P_p11_2/camel_lya_spectra_snap_082.hdf5 \
+    spectra/.../1P_p11_n2/camel_lya_spectra_snap_082.hdf5 \
+    -l "Baseline,Param_11_+2,Param_11_-2"
 
   # Track redshift evolution (different snapshots from same or different simulations)
   python analyze_spectra.py evolve snap_080.hdf5 snap_085.hdf5 snap_090.hdf5

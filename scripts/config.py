@@ -50,27 +50,42 @@ def get_available_datasets(suite='IllustrisTNG'):
 
             dir_name = sim_dir.name
 
-            # Look for directories matching pattern: SET_NUM (e.g., LH_0, LH_1, 1P_0)
-            if '_' in dir_name and dir_name.startswith(sim_set + '_'):
-                parts = dir_name.split('_')
-                if len(parts) == 2:
-                    _, sim_num = parts
+            # Extract simulation identifier from directory name
+            # Strategy: Remove the prefix "{sim_set}_" to get the identifier
+            # For LH: "LH_80" -> extract "80"
+            # For 1P: "1P_p11_2" -> extract "p11_2", "1P_0" -> extract "0"
+            # This handles any pattern: {SET}_{IDENTIFIER}
+            
+            sim_identifier = None
+            
+            if dir_name.startswith(f"{sim_set}_"):
+                # Remove the prefix to get the identifier
+                sim_identifier = dir_name[len(sim_set) + 1:]  # +1 for underscore
 
-                    # Verify this directory contains simulation data
-                    # Check for snapshots, spectra files, or SPECTRA subdirectories
-                    has_data = (list(sim_dir.glob("snap_*.hdf5")) or
-                                list(sim_dir.glob("camel_*_spectra_snap_*.hdf5")) or
-                                list(sim_dir.glob("SPECTRA_*")))
+            if sim_identifier:
+                # Verify this directory contains simulation data
+                # Check for snapshots, spectra files, or SPECTRA subdirectories
+                has_data = (list(sim_dir.glob("snap_*.hdf5")) or
+                            list(sim_dir.glob("camel_*_spectra_snap_*.hdf5")) or
+                            list(sim_dir.glob("SPECTRA_*")))
 
-                    if has_data:
-                        if sim_set not in datasets:
-                            datasets[sim_set] = []
-                        datasets[sim_set].append(sim_num)
+                if has_data:
+                    if sim_set not in datasets:
+                        datasets[sim_set] = []
+                    datasets[sim_set].append(sim_identifier)
 
     # Sort the simulation numbers for each set
+    # Custom sort: pure numbers first (sorted numerically), then alphanumeric (sorted lexically)
     for sim_set in datasets:
-        datasets[sim_set] = sorted(
-            datasets[sim_set], key=lambda x: int(x) if x.isdigit() else x)
+        def sort_key(x):
+            # If it's a pure number, sort numerically first
+            if x.isdigit():
+                return (0, int(x), '')
+            # Otherwise, sort alphabetically second
+            else:
+                return (1, 0, x)
+        
+        datasets[sim_set] = sorted(datasets[sim_set], key=sort_key)
 
     return datasets
 
