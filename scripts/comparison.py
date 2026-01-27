@@ -191,28 +191,37 @@ def compare_simulations(spectra_files, labels=None, output_path=None):
         cddf = res['cddf']
         if cddf['n_absorbers'] > 0 and len(cddf['counts']) > 0:
             color = colors[i % len(colors)]
-            # Normalize counts to get f(N_HI) - number density per bin
-            log_N = cddf['bin_centers']
-            # f(N) in units of dN/dlog(N)/dz (absorbers per unit log column density per unit redshift)
-            dN_dz = cddf['n_absorbers'] / res['n_sightlines'] / 0.1  # Rough dz estimate
-            delta_log_N = log_N[1] - log_N[0] if len(log_N) > 1 else 1.0
-            f_N = cddf['counts'] / (cddf['n_absorbers'] if cddf['n_absorbers'] > 0 else 1) / delta_log_N
+            
+            # Properly compute log-space normalization
+            bin_centers = cddf['bin_centers']
+            log_bin_centers = np.log10(bin_centers)
+            
+            # Get delta_log_N from cddf_dict or compute it
+            if 'delta_log_N' in cddf:
+                delta_log_N = cddf['delta_log_N'][0]  # Constant for logspace
+            else:
+                log_bins = np.log10(cddf['bins'])
+                delta_log_N = np.mean(np.diff(log_bins))
+            
+            # f(N) in units of dN/dlog10(N) per sightline
+            f_N = cddf['counts'] / (cddf['n_absorbers'] * delta_log_N)
             
             # Only plot non-zero bins
             mask = f_N > 0
             if np.any(mask):
-                ax.scatter(log_N[mask], f_N[mask],
+                ax.scatter(log_bin_centers[mask], f_N[mask],
                           s=30, alpha=0.6, color=color, label=res['label'])
                 
                 # Plot fit if available
                 if not np.isnan(cddf['beta_fit']):
                     N_fit = np.logspace(12, 16, 100)
-                    # Simple power law for visualization
-                    f_fit = f_N[mask].max() * (N_fit / 10**log_N[mask][np.argmax(f_N[mask])]) ** cddf['beta_fit']
+                    # Power law: f(N) = A * N^(-beta)
+                    A_norm = f_N[mask].max() / (bin_centers[mask][np.argmax(f_N[mask])]**(-cddf['beta_fit']))
+                    f_fit = A_norm * N_fit**(-cddf['beta_fit'])
                     ax.plot(np.log10(N_fit), f_fit, '--', color=color, alpha=0.5, linewidth=1.5)
     
     ax.set_xlabel(r'$\log_{10}(N_{\rm HI} / {\rm cm}^{-2})$', fontsize=12)
-    ax.set_ylabel(r'$f(N_{\rm HI})$', fontsize=12)
+    ax.set_ylabel(r'$f(N_{\rm HI})$ [dN/d log$_{10}$ N]', fontsize=12)
     ax.set_yscale('log')
     ax.set_title('Column Density Distribution', fontsize=13, fontweight='bold')
     ax.grid(True, alpha=0.3)

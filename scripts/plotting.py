@@ -147,15 +147,19 @@ def plot_flux_power_spectrum(power_dict, redshift, output_path, title=None):
     P_k = P_k[mask]
     P_k_err = P_k_err[mask]
 
+    # Compute k*P(k)/pi following Khaire et al. (2019) convention
+    kPk_pi = k * P_k / np.pi
+    kPk_pi_err = k * P_k_err / np.pi
+
     # Plot with error bars
-    ax.loglog(k, P_k, 'o-', color='steelblue', linewidth=2,
+    ax.loglog(k, kPk_pi, 'o-', color='steelblue', linewidth=2,
               markersize=4, label=f'z = {redshift:.2f}')
-    ax.fill_between(k, P_k - P_k_err, P_k + P_k_err,
+    ax.fill_between(k, kPk_pi - kPk_pi_err, kPk_pi + kPk_pi_err,
                     alpha=0.3, color='steelblue')
 
     # Formatting
     ax.set_xlabel(r'Wavenumber $k$ [s/km]', fontsize=14)
-    ax.set_ylabel(r'Power Spectrum $P_F(k)$ [km/s]', fontsize=14)
+    ax.set_ylabel(r'$k \cdot P_F(k) / \pi$ [dimensionless]', fontsize=14)
     ax.set_xlim(k[1], k[-1])
     ax.grid(True, alpha=0.3, which='both')
     ax.legend(fontsize=12)
@@ -185,9 +189,16 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
     bin_centers = cddf_dict['bin_centers']
     beta = cddf_dict['beta_fit']
 
-    # Normalize to get f(N_HI)
-    bin_widths = np.diff(bins)
-    f_N = counts / bin_widths
+    # Normalize to get f(N_HI) in units of dN/dlog10(N)
+    # Use log-space bin widths for proper normalization
+    if 'delta_log_N' in cddf_dict:
+        delta_log_N = cddf_dict['delta_log_N']
+    else:
+        # Fallback for backward compatibility
+        log_bin_edges = np.log10(bins)
+        delta_log_N = np.diff(log_bin_edges)
+    
+    f_N = counts / delta_log_N
 
     # Plot
     mask = f_N > 0
@@ -200,15 +211,16 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
         N_fit = bin_centers[fit_range]
         # Normalize to data at N ~ 1e14
         norm_idx = np.argmin(np.abs(bin_centers - 1e14))
-        A_norm = f_N[norm_idx] / (bin_centers[norm_idx]**(-beta))
-        f_fit = A_norm * N_fit**(-beta)
+        if f_N[norm_idx] > 0:
+            A_norm = f_N[norm_idx] / (bin_centers[norm_idx]**(-beta))
+            f_fit = A_norm * N_fit**(-beta)
 
-        ax.loglog(N_fit, f_fit, '--', color='red', linewidth=2,
-                  label=f'Power law: β = {beta:.2f}')
+            ax.loglog(N_fit, f_fit, '--', color='red', linewidth=2,
+                      label=f'Power law: β = {beta:.2f}')
 
     # Formatting
     ax.set_xlabel(r'Column Density $N_{\rm HI}$ [cm$^{-2}$]', fontsize=14)
-    ax.set_ylabel(r'$f(N_{\rm HI})$ [cm$^2$]', fontsize=14)
+    ax.set_ylabel(r'$f(N_{\rm HI})$ [dN/d log$_{10}$ N]', fontsize=14)
     ax.set_xlim(1e12, 1e22)
     ax.grid(True, alpha=0.3, which='both')
     ax.legend(fontsize=12)

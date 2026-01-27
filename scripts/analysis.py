@@ -111,19 +111,59 @@ def get_snapshot_number(filepath):
 
 
 # Compute column density distribution f(N_HI) from optical depth.
-def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5):
+def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
+    """
+    Compute the column density distribution function f(N_HI).
+    
+    Parameters
+    ----------
+    tau : ndarray, shape (n_sightlines, n_pixels)
+        Optical depth array
+    velocity_spacing : float
+        Velocity spacing between pixels [km/s]
+    threshold : float
+        Tau threshold for defining absorption features
+    colden : ndarray, shape (n_sightlines, n_pixels), optional
+        Pre-computed column densities from fake_spectra [cm^-2].
+        If provided, uses these instead of computing from tau.
+        This is the recommended method as it uses fake_spectra's 
+        exact calculation including Voigt profile integration.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing CDDF statistics and fit parameters
+        
+    Notes
+    -----
+    Two methods for computing N_HI:
+    
+    1. Direct method (RECOMMENDED, if colden provided):
+       Uses fake_spectra's pre-computed column densities which include
+       full Voigt profile integration and proper treatment of line physics.
+       
+    2. Fallback method (if colden not provided):
+       N_HI ≈ 8.51e11 * Σ(tau) * dv [cm^-2]
+       This is an approximation that matches fake_spectra's integrated values
+       empirically, but the direct method is more accurate.
+       
+       Historical note: Code originally used 1.13e14, which was ~133x too high.
+       The corrected constant 8.51e11 was determined by comparing to 
+       fake_spectra's colden dataset.
+    """
     c = 2.998e5  # km/s
     lambda_lya = 1215.67  # Angstroms
     f_osc = 0.4162  # Oscillator strength for Lyman-alpha
 
-    # Convert to frequency space for column density
-    # N_HI = (m_e * c * tau) / (pi * e^2 * f * lambda)
-    # Simplified: N_HI ~ 1.13e14 * tau * (dv in km/s)  for Lyman-alpha
+    # Corrected constant based on fake_spectra validation
+    # (see Meeting-minutes.md for derivation)
+    TAU_TO_COLDEN_CONSTANT = 8.51e11  # cm^-2 / (km/s), empirically calibrated
 
     column_densities = []
 
     for i in range(tau.shape[0]):
         tau_line = tau[i, :]
+        colden_line = colden[i, :] if colden is not None else None
 
         # Find absorption features (contiguous pixels above threshold)
         absorbing = tau_line > threshold
@@ -140,19 +180,26 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5):
             elif not absorbing[j] and in_feature:
                 # End of feature
                 in_feature = False
-                feature_tau = tau_line[feature_start:j]
-
-                # Estimate column density using pixel optical depth method
-                # N_HI = 1.13e14 * integral(tau * dv) cm^-2
-                N_HI = 1.13e14 * np.sum(feature_tau) * velocity_spacing
+                
+                # Compute column density
+                if colden_line is not None:
+                    # Method 1 (RECOMMENDED): Use fake_spectra's pre-computed values
+                    N_HI = np.sum(colden_line[feature_start:j])
+                else:
+                    # Method 2 (FALLBACK): Estimate from tau
+                    feature_tau = tau_line[feature_start:j]
+                    N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
 
                 if N_HI > 1e12:  # Only count above sensitivity threshold
                     column_densities.append(N_HI)
 
         # Handle case where feature extends to edge
         if in_feature:
-            feature_tau = tau_line[feature_start:]
-            N_HI = 1.13e14 * np.sum(feature_tau) * velocity_spacing
+            if colden_line is not None:
+                N_HI = np.sum(colden_line[feature_start:])
+            else:
+                feature_tau = tau_line[feature_start:]
+                N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
             if N_HI > 1e12:
                 column_densities.append(N_HI)
 
@@ -167,18 +214,24 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5):
         bins = np.logspace(log_N_min, log_N_max, n_bins)
         counts, bin_edges = np.histogram(column_densities, bins=bins)
 
-        # Fit power law in range 13 < log(N) < 17 (typical Lyman-alpha forest)
+        # Compute log-space bin properties for proper normalization
+        log_bin_edges = np.log10(bin_edges)
+        delta_log_N = np.diff(log_bin_edges)  # Constant for logspace bins
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        fit_mask = (np.log10(bin_centers) > 13.0) & (
-            np.log10(bin_centers) < 17.0)
+        log_bin_centers = np.log10(bin_centers)
+
+        # Fit power law in range 13 < log(N) < 17 (typical Lyman-alpha forest)
+        fit_mask = (log_bin_centers > 13.0) & (log_bin_centers < 17.0)
 
         if np.sum(fit_mask) > 5 and np.sum(counts[fit_mask]) > 0:
-            # Fit f(N) = A * N^-beta
-            log_N_fit = np.log10(bin_centers[fit_mask])
-            log_f_fit = np.log10(counts[fit_mask] + 1e-10)  # Avoid log(0)
+            # Fit f(N) = A * N^-beta using properly normalized f(N)
+            # f(N) in units of dN/dlog10(N)
+            f_N_fit = counts[fit_mask] / delta_log_N[fit_mask]
+            log_f_fit = np.log10(f_N_fit + 1e-10)  # Avoid log(0)
+            log_N_fit = log_bin_centers[fit_mask]
 
             # Linear fit in log-log space
-            valid = np.isfinite(log_f_fit) & (counts[fit_mask] > 0)
+            valid = np.isfinite(log_f_fit) & (f_N_fit > 0)
             if np.sum(valid) > 2:
                 coeffs = np.polyfit(log_N_fit[valid], log_f_fit[valid], 1)
                 beta_fit = -coeffs[0]  # Negative slope
@@ -190,13 +243,18 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5):
         bins = np.logspace(12, 22, 50)
         counts = np.zeros(len(bins) - 1)
         bin_edges = bins
+        log_bin_edges = np.log10(bin_edges)
+        delta_log_N = np.diff(log_bin_edges)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         beta_fit = np.nan
 
     return {
         'N_HI': column_densities,
         'counts': counts,
         'bins': bin_edges,
-        'bin_centers': (bin_edges[:-1] + bin_edges[1:]) / 2,
+        'bin_centers': bin_centers,
+        'log_bin_edges': log_bin_edges,
+        'delta_log_N': delta_log_N,
         'beta_fit': beta_fit,
         'n_absorbers': len(column_densities)
     }
@@ -224,13 +282,36 @@ def compute_effective_optical_depth(tau):
 
 
 # Compute line width (Doppler b-parameter) distribution from absorption features.
-def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5):
+def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
+    """
+    Compute line width (Doppler b-parameter) distribution.
+    
+    Parameters
+    ----------
+    tau : ndarray, shape (n_sightlines, n_pixels)
+        Optical depth array
+    velocity_spacing : float
+        Velocity spacing between pixels [km/s]
+    threshold : float
+        Tau threshold for defining absorption features
+    colden : ndarray, shape (n_sightlines, n_pixels), optional
+        Pre-computed column densities from fake_spectra [cm^-2].
+        If provided, uses these for N_HI calculation instead of tau.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing line width statistics
+    """
     from scipy.optimize import curve_fit
     from scipy.signal import find_peaks
 
     # Physical constants
     m_H = 1.673e-24  # Hydrogen mass in grams
     k_B = 1.381e-16  # Boltzmann constant in CGS
+    
+    # Corrected constant (see compute_column_density_distribution docstring)
+    TAU_TO_COLDEN_CONSTANT = 8.51e11  # cm^-2 / (km/s)
 
     column_densities = []
     b_parameters = []
@@ -246,6 +327,7 @@ def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5):
 
     for i in range(tau.shape[0]):
         tau_line = tau[i, :]
+        colden_line = colden[i, :] if colden is not None else None
 
         # Find peaks in optical depth (absorption features)
         peaks, properties = find_peaks(tau_line, height=threshold, distance=5)
@@ -285,8 +367,13 @@ def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5):
 
                 tau_0_fit, b_fit, v_center_fit = popt
 
-                # Estimate column density from integrated optical depth
-                N_HI = 1.13e14 * np.sum(feature_tau) * velocity_spacing
+                # Estimate column density
+                if colden_line is not None:
+                    # Use fake_spectra's pre-computed values
+                    N_HI = np.sum(colden_line[left:right+1])
+                else:
+                    # Fallback: estimate from tau
+                    N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
 
                 # Only keep physically reasonable absorbers
                 if N_HI > 1e12 and 2.0 < b_fit < 80.0:
@@ -396,7 +483,36 @@ def compute_temperature_density_relation(temperature, density, tau, min_tau=0.1)
 
 
 # Compute statistics for metal line absorption systems.
-def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', threshold=0.05):
+def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', threshold=0.05, colden=None):
+    """
+    Compute statistics for metal line absorption systems.
+    
+    Parameters
+    ----------
+    tau : ndarray, shape (n_sightlines, n_pixels)
+        Optical depth array for the metal ion
+    velocity_spacing : float
+        Velocity spacing between pixels [km/s]
+    ion_name : str
+        Name of the ion (e.g., 'CIV', 'OVI')
+    threshold : float
+        Tau threshold for defining absorption features
+    colden : ndarray, shape (n_sightlines, n_pixels), optional
+        Pre-computed column densities from fake_spectra [cm^-2].
+        If provided, uses these for N_ion calculation.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing metal line statistics
+        
+    Notes
+    -----
+    WARNING: The fallback constant 1e13 for metal ions has NOT been validated
+    like the HI constant. This is a placeholder and should be calibrated
+    against fake_spectra's colden dataset for each specific ion.
+    Use colden parameter when available for accurate results.
+    """
     n_sightlines, n_pixels = tau.shape
 
     # Covering fraction: fraction of pixels with detectable absorption
@@ -417,6 +533,7 @@ def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', thres
 
     for i in range(n_sightlines):
         tau_line = tau[i, :]
+        colden_line = colden[i, :] if colden is not None else None
 
         # Find absorption features
         absorbing = tau_line > threshold
@@ -434,17 +551,24 @@ def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', thres
             elif not absorbing[j] and in_feature:
                 # End of feature
                 in_feature = False
-                feature_tau = tau_line[feature_start:j]
-
-                # Estimate column density (simplified, ion-specific factors needed)
-                # For now use generic: N ~ 10^13 * integral(tau * dv)
-                N_ion = 1e13 * np.sum(feature_tau) * velocity_spacing
+                
+                # Estimate column density
+                if colden_line is not None:
+                    # Use fake_spectra's pre-computed values
+                    N_ion = np.sum(colden_line[feature_start:j])
+                else:
+                    # Fallback: use generic constant (NEEDS VALIDATION!)
+                    feature_tau = tau_line[feature_start:j]
+                    N_ion = 1e13 * np.sum(feature_tau) * velocity_spacing
                 column_densities.append(N_ion)
 
         # Handle case where feature extends to edge
         if in_feature:
-            feature_tau = tau_line[feature_start:]
-            N_ion = 1e13 * np.sum(feature_tau) * velocity_spacing
+            if colden_line is not None:
+                N_ion = np.sum(colden_line[feature_start:])
+            else:
+                feature_tau = tau_line[feature_start:]
+                N_ion = 1e13 * np.sum(feature_tau) * velocity_spacing
             column_densities.append(N_ion)
 
     column_densities = np.array(column_densities)

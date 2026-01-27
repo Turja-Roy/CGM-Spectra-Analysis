@@ -112,6 +112,23 @@ def cmd_analyze(args):
 
         # Always compute flux from tau
         flux = np.exp(-tau)
+        
+        # Try to load column density data (for improved N_HI calculations)
+        colden = None
+        try:
+            # Determine colden path based on tau_path
+            # tau_path format: 'tau/H/1/1215' -> colden path: 'colden/H/1'
+            if tau_path.startswith('tau/'):
+                parts = tau_path.split('/')
+                if len(parts) >= 3:
+                    colden_path = f'colden/{parts[1]}/{parts[2]}'
+                    if colden_path in f:
+                        colden = f[colden_path][:]
+                        print(f"  Loaded column density data from {colden_path}")
+                        print(f"  Using fake_spectra's pre-computed column densities for accuracy")
+        except Exception as e:
+            print(f"  Note: Could not load column density data: {e}")
+            print(f"  Will use fallback tau-based method for N_HI calculation")
 
         # Load metadata if available
         redshift = None
@@ -128,7 +145,9 @@ def cmd_analyze(args):
         indices = np.random.choice(n_sightlines, max_sightlines, replace=False)
         indices.sort()  # Keep in order
         tau = tau[indices]
-        flux = np.exp(-tau)
+        flux = flux[indices]
+        if colden is not None:
+            colden = colden[indices]
         n_sightlines = max_sightlines
     
     print(f"Sightlines: {n_sightlines}")
@@ -179,7 +198,7 @@ def cmd_analyze(args):
 
     if cd_method == 'simple':
         cddf_dict = compute_column_density_distribution(
-            tau, velocity_spacing, threshold=0.5)
+            tau, velocity_spacing, threshold=0.5, colden=colden)
         print(f"Simple pixel optical depth method")
         print(f"Identified {cddf_dict['n_absorbers']} absorbers")
         if not np.isnan(cddf_dict['beta_fit']):
@@ -203,7 +222,7 @@ def cmd_analyze(args):
             print(f"  Error: {cddf_dict['error']}")
             print("  Falling back to simple method...")
             cddf_dict = compute_column_density_distribution(
-                tau, velocity_spacing, threshold=0.5)
+                tau, velocity_spacing, threshold=0.5, colden=colden)
 
     elif cd_method == 'hybrid':
         cddf_dict = utils.compute_column_density_distribution_hybrid(
@@ -217,13 +236,13 @@ def cmd_analyze(args):
     else:
         print(f"Unknown method '{cd_method}', using simple")
         cddf_dict = compute_column_density_distribution(
-            tau, velocity_spacing, threshold=0.5)
+            tau, velocity_spacing, threshold=0.5, colden=colden)
 
     # [4b/8] Line width distribution (b-parameter analysis)
     print("\n[4b/8] Computing line width distribution b(N_HI)...")
     try:
         lwd_dict = compute_line_width_distribution(
-            tau, velocity_spacing, threshold=0.5)
+            tau, velocity_spacing, threshold=0.5, colden=colden)
         print(f"Identified {
               lwd_dict['n_absorbers']} absorbers with b-parameters")
         if lwd_dict['n_absorbers'] > 0:
@@ -310,6 +329,18 @@ def cmd_analyze(args):
                 for tau_group_path, elem, ion, wave in available_lines:
                     # Load tau for this line
                     line_tau = np.array(f[tau_group_path])
+                    
+                    # Try to load colden for this line
+                    line_colden = None
+                    try:
+                        colden_path = f'colden/{elem}/{ion}'
+                        if colden_path in f:
+                            line_colden = np.array(f[colden_path])
+                            # Subsample if needed to match line_tau
+                            if max_sightlines is not None and line_colden.shape[0] > max_sightlines:
+                                line_colden = line_colden[indices]
+                    except Exception:
+                        pass  # colden not available for this ion
 
                     # Create descriptive ion name
                     # Map element symbols to common names
@@ -329,7 +360,8 @@ def cmd_analyze(args):
                         line_tau,
                         velocity_spacing=velocity_spacing,
                         ion_name=ion_name,
-                        threshold=threshold
+                        threshold=threshold,
+                        colden=line_colden
                     )
                     metal_line_stats.append(stats)
 
