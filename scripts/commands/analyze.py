@@ -572,6 +572,41 @@ def cmd_analyze(args):
     except Exception as e:
         print(f"Warning: Could not create diagnostic plots: {e}")
 
+    # [9/8] Export analysis data
+    print("\n[9/8] Exporting analysis results...")
+    try:
+        from scripts.data_export import save_analysis_results, get_analysis_output_dir
+        
+        # Prepare results dictionary
+        results_dict = {
+            'metadata': {
+                'spectra_file': spectra_file,
+                'redshift': redshift,
+                'n_sightlines': n_sightlines,
+                'n_pixels': n_pixels,
+                'cd_method': cd_method,
+            },
+            'flux_stats': stats,
+            'tau_eff': tau_eff_dict,
+            'power_spectrum': power_dict,
+            'cddf': cddf_dict,
+            'line_widths': lwd_dict,
+            'temp_density': tdens_dict,
+            'metal_lines': metal_line_stats if len(metal_line_stats) > 0 else None,
+        }
+        
+        # Get output directory
+        output_dir = get_analysis_output_dir(spectra_file)
+        
+        # Save results
+        created_files = save_analysis_results(results_dict, output_dir, formats=['json', 'csv'])
+        
+        print(f"Exported analysis data to: {output_dir}")
+        
+    except Exception as e:
+        print(f"Warning: Could not export analysis data: {e}")
+        print("(Analysis completed successfully, but data export failed)")
+
     # ========== SUMMARY ==========
     print(f"\n{'=' * 70}")
     print("COMPREHENSIVE ANALYSIS COMPLETE")
@@ -612,6 +647,22 @@ def cmd_analyze(args):
     if len(metal_line_stats) > 1:
         print("- Multi-line comparison")
     print("- Detailed statistics")
+    
+    try:
+        print(f"\nData exported to: {output_dir}")
+        print("- analysis_results.json")
+        print("- power_spectrum.csv")
+        print("- cddf.csv")
+        print("- flux_stats.csv")
+        if lwd_dict is not None and lwd_dict['n_absorbers'] > 0:
+            print("- line_widths.csv")
+        if tdens_dict is not None:
+            print("- temp_density.csv")
+        if len(metal_line_stats) > 0:
+            print("- metal_lines.csv")
+    except:
+        pass
+    
     print(f"{'=' * 70}")
 
     return 0

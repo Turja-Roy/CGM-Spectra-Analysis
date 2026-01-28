@@ -11,10 +11,18 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 SPECTRA_DIR = PROJECT_ROOT / "spectra"
 ARCHIVE_DIR = PROJECT_ROOT / "archive"
 
+# Analysis output subdirectories
+SIGHTLINES_DIR = OUTPUT_DIR / "sightlines"
+ANALYSIS_OUTPUT_DIR = OUTPUT_DIR / "analysis"
+COMPARISON_DIR = OUTPUT_DIR / "comparisons"
+
 # Ensure output directories exist
 PLOTS_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 SPECTRA_DIR.mkdir(exist_ok=True)
+SIGHTLINES_DIR.mkdir(exist_ok=True)
+ANALYSIS_OUTPUT_DIR.mkdir(exist_ok=True)
+COMPARISON_DIR.mkdir(exist_ok=True)
 
 
 # CAMEL simulation suites available

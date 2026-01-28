@@ -113,51 +113,11 @@ def get_snapshot_number(filepath):
 # Compute column density distribution f(N_HI) from optical depth.
 def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
     """
-    Compute the column density distribution function f(N_HI).
-    
-    Parameters
-    ----------
-    tau : ndarray, shape (n_sightlines, n_pixels)
-        Optical depth array
-    velocity_spacing : float
-        Velocity spacing between pixels [km/s]
-    threshold : float
-        Tau threshold for defining absorption features
-    colden : ndarray, shape (n_sightlines, n_pixels), optional
-        Pre-computed column densities from fake_spectra [cm^-2].
-        If provided, uses these instead of computing from tau.
-        This is the recommended method as it uses fake_spectra's 
-        exact calculation including Voigt profile integration.
-        
-    Returns
-    -------
-    dict
-        Dictionary containing CDDF statistics and fit parameters
-        
-    Notes
-    -----
-    Two methods for computing N_HI:
-    
-    1. Direct method (RECOMMENDED, if colden provided):
-       Uses fake_spectra's pre-computed column densities which include
-       full Voigt profile integration and proper treatment of line physics.
-       
-    2. Fallback method (if colden not provided):
-       N_HI ≈ 8.51e11 * Σ(tau) * dv [cm^-2]
-       This is an approximation that matches fake_spectra's integrated values
-       empirically, but the direct method is more accurate.
-       
-       Historical note: Code originally used 1.13e14, which was ~133x too high.
-       The corrected constant 8.51e11 was determined by comparing to 
-       fake_spectra's colden dataset.
+    Compute column density distribution f(N_HI).
+    Uses fake_spectra's pre-computed colden if provided, otherwise estimates from tau.
     """
-    c = 2.998e5  # km/s
-    lambda_lya = 1215.67  # Angstroms
-    f_osc = 0.4162  # Oscillator strength for Lyman-alpha
-
-    # Corrected constant based on fake_spectra validation
-    # (see Meeting-minutes.md for derivation)
-    TAU_TO_COLDEN_CONSTANT = 8.51e11  # cm^-2 / (km/s), empirically calibrated
+    # Corrected constant: 8.51e11 cm^-2 / (km/s), empirically calibrated
+    TAU_TO_COLDEN_CONSTANT = 8.51e11
 
     column_densities = []
 
@@ -183,10 +143,8 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
                 
                 # Compute column density
                 if colden_line is not None:
-                    # Method 1 (RECOMMENDED): Use fake_spectra's pre-computed values
                     N_HI = np.sum(colden_line[feature_start:j])
                 else:
-                    # Method 2 (FALLBACK): Estimate from tau
                     feature_tau = tau_line[feature_start:j]
                     N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
 
@@ -283,45 +241,18 @@ def compute_effective_optical_depth(tau):
 
 # Compute line width (Doppler b-parameter) distribution from absorption features.
 def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
-    """
-    Compute line width (Doppler b-parameter) distribution.
-    
-    Parameters
-    ----------
-    tau : ndarray, shape (n_sightlines, n_pixels)
-        Optical depth array
-    velocity_spacing : float
-        Velocity spacing between pixels [km/s]
-    threshold : float
-        Tau threshold for defining absorption features
-    colden : ndarray, shape (n_sightlines, n_pixels), optional
-        Pre-computed column densities from fake_spectra [cm^-2].
-        If provided, uses these for N_HI calculation instead of tau.
-        
-    Returns
-    -------
-    dict
-        Dictionary containing line width statistics
-    """
+    """Compute line width (Doppler b-parameter) distribution."""
     from scipy.optimize import curve_fit
     from scipy.signal import find_peaks
 
-    # Physical constants
-    m_H = 1.673e-24  # Hydrogen mass in grams
-    k_B = 1.381e-16  # Boltzmann constant in CGS
-    
-    # Corrected constant (see compute_column_density_distribution docstring)
     TAU_TO_COLDEN_CONSTANT = 8.51e11  # cm^-2 / (km/s)
 
     column_densities = []
     b_parameters = []
 
-    # Approximate Voigt profile for optical depth.
     def voigt_approx(v, tau_0, b, v_center):
         a = 4.7e-4  # Damping parameter for Lyman-alpha
         u = (v - v_center) / b
-
-        # Gaussian core (approximation for thermal broadening)
         tau = tau_0 * np.exp(-u**2)
         return tau
 
@@ -369,10 +300,8 @@ def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden
 
                 # Estimate column density
                 if colden_line is not None:
-                    # Use fake_spectra's pre-computed values
                     N_HI = np.sum(colden_line[left:right+1])
                 else:
-                    # Fallback: estimate from tau
                     N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
 
                 # Only keep physically reasonable absorbers
@@ -387,9 +316,7 @@ def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden
     column_densities = np.array(column_densities)
     b_parameters = np.array(b_parameters)
 
-    # Convert b-parameters to temperatures (assuming thermal broadening)
-    # b = sqrt(2kT/m) => T = (b^2 * m) / (2k)
-    # For HI: T(K) = 1.28e4 * b(km/s)^2
+    # Convert b to temperature: T(K) = 1.28e4 * b(km/s)^2
     temperatures = 1.28e4 * b_parameters**2
 
     return {
@@ -484,35 +411,7 @@ def compute_temperature_density_relation(temperature, density, tau, min_tau=0.1)
 
 # Compute statistics for metal line absorption systems.
 def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', threshold=0.05, colden=None):
-    """
-    Compute statistics for metal line absorption systems.
-    
-    Parameters
-    ----------
-    tau : ndarray, shape (n_sightlines, n_pixels)
-        Optical depth array for the metal ion
-    velocity_spacing : float
-        Velocity spacing between pixels [km/s]
-    ion_name : str
-        Name of the ion (e.g., 'CIV', 'OVI')
-    threshold : float
-        Tau threshold for defining absorption features
-    colden : ndarray, shape (n_sightlines, n_pixels), optional
-        Pre-computed column densities from fake_spectra [cm^-2].
-        If provided, uses these for N_ion calculation.
-        
-    Returns
-    -------
-    dict
-        Dictionary containing metal line statistics
-        
-    Notes
-    -----
-    WARNING: The fallback constant 1e13 for metal ions has NOT been validated
-    like the HI constant. This is a placeholder and should be calibrated
-    against fake_spectra's colden dataset for each specific ion.
-    Use colden parameter when available for accurate results.
-    """
+    """Compute statistics for metal line absorption systems."""
     n_sightlines, n_pixels = tau.shape
 
     # Covering fraction: fraction of pixels with detectable absorption
