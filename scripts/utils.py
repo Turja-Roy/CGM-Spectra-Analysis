@@ -1761,3 +1761,140 @@ def _fit_single_absorber(flux, wavelength, absorber, redshift, continuum_window,
     except Exception as e:
         print(f"VoigtFit error: {e}")
         return None
+
+
+# ============================== #
+# TEMPERATURE/DENSITY COMPUTATION #
+# ============================== #
+
+def compute_temp_density_chunked(spec, elem, ion, chunk_size=None, verbose=True):
+    """
+    Compute temperature and density-weighted density in chunks to reduce memory usage.
+    Each sightline is computed independently, so chunking produces identical results
+    to computing all at once, but with much lower peak memory usage.
+    """
+    import gc
+    
+    # Get total number of sightlines
+    n_sightlines = spec.cofm.shape[0]
+    
+    # Auto-detect chunk size if not specified
+    if chunk_size is None:
+        if n_sightlines < 1000:
+            chunk_size = n_sightlines  # No chunking for small datasets
+        elif n_sightlines < 5000:
+            chunk_size = 1000
+        else:
+            chunk_size = 2000
+    
+    n_chunks = (n_sightlines + chunk_size - 1) // chunk_size
+    
+    if verbose:
+        if n_chunks == 1:
+            print(f"Computing temperature and density for {n_sightlines} sightlines...")
+        else:
+            print(f"\nComputing temperature and density in {n_chunks} chunks of ~{chunk_size} sightlines...")
+            print(f"  Total sightlines: {n_sightlines}")
+            print(f"  Chunk size: {chunk_size}")
+    
+    # Save original sightline configuration
+    original_cofm = spec.cofm
+    original_axis = spec.axis
+    original_numlos = spec.NumLos
+    
+    # Save original colden (needed for density normalization)
+    original_colden = spec.colden.get((elem, ion))
+    if original_colden is None:
+        return False, f"Column density not found for {elem} {ion}. Must compute tau/colden first."
+    
+    temp_chunks = []
+    dens_chunks = []
+    
+    try:
+        for i in range(n_chunks):
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, n_sightlines)
+            n_in_chunk = end_idx - start_idx
+            
+            if verbose and n_chunks > 1:
+                print(f"\n  Chunk {i+1}/{n_chunks}: sightlines {start_idx}-{end_idx-1} ({n_in_chunk} sightlines)")
+            
+            # Garbage collection before each chunk
+            gc.collect()
+            
+            # Temporarily modify spec to use subset of sightlines
+            spec.cofm = original_cofm[start_idx:end_idx]
+            spec.axis = original_axis[start_idx:end_idx]
+            spec.NumLos = n_in_chunk
+            spec.colden[(elem, ion)] = original_colden[start_idx:end_idx]
+            
+            # Compute temperature for this chunk
+            if verbose:
+                prefix = "    " if n_chunks > 1 else ""
+                print(f"{prefix}Computing temperature...", end=' ', flush=True)
+            try:
+                temp_chunk = spec._get_mass_weight_quantity(spec._temp_single_file, elem, ion)
+                temp_chunks.append(temp_chunk)
+                if verbose:
+                    print(f"OK (shape: {temp_chunk.shape})")
+            except Exception as e:
+                return False, f"Temperature computation failed on chunk {i+1}: {e}"
+            
+            # Clear memory between temp and density
+            del temp_chunk
+            gc.collect()
+            
+            # Compute density for this chunk
+            if verbose:
+                prefix = "    " if n_chunks > 1 else ""
+                print(f"{prefix}Computing density-weighted density...", end=' ', flush=True)
+            try:
+                dens_chunk = spec._get_mass_weight_quantity(spec._densweightdens, elem, ion)
+                dens_chunks.append(dens_chunk)
+                if verbose:
+                    print(f"OK (shape: {dens_chunk.shape})")
+            except Exception as e:
+                return False, f"Density computation failed on chunk {i+1}: {e}"
+            
+            # Clear memory after chunk
+            del dens_chunk
+            gc.collect()
+        
+        # Restore original configuration
+        spec.cofm = original_cofm
+        spec.axis = original_axis
+        spec.NumLos = original_numlos
+        spec.colden[(elem, ion)] = original_colden
+        
+        # Concatenate all chunks
+        if verbose and n_chunks > 1:
+            print(f"\n  Concatenating {n_chunks} chunks...")
+        
+        temp_full = np.concatenate(temp_chunks, axis=0)
+        dens_full = np.concatenate(dens_chunks, axis=0)
+        
+        if verbose and n_chunks > 1:
+            print(f"    Temperature shape: {temp_full.shape}")
+            print(f"    Density shape: {dens_full.shape}")
+        
+        # Store in spec object
+        spec.temp[(elem, ion)] = temp_full
+        spec.dens_weight_dens[(elem, ion)] = dens_full
+        
+        # Final cleanup
+        del temp_chunks, dens_chunks, temp_full, dens_full
+        gc.collect()
+        
+        if verbose and n_chunks > 1:
+            print("  ✓ Temperature and density computation complete")
+        
+        return True, None
+        
+    except Exception as e:
+        # Always restore original configuration on error
+        spec.cofm = original_cofm
+        spec.axis = original_axis
+        spec.NumLos = original_numlos
+        spec.colden[(elem, ion)] = original_colden
+        
+        return False, f"Unexpected error: {e}"

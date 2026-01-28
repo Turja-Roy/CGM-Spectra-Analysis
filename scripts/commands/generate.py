@@ -199,18 +199,22 @@ def cmd_generate(args):
     print(f"  Total computation time: {total_elapsed:.1f}s")
 
     # Compute temperature and density for first line (needed for T-ρ analysis)
-    print("\nComputing temperature and density along sightlines...")
     first_line_code = lines_to_compute[0]
     elem, ion, wave, name = config.get_line_info(first_line_code)
 
     try:
-        print(f"Computing temperature for {
-              elem} {ion}...", end=' ', flush=True)
-        spec.get_temp(elem, ion)
-
-        print(
-            f"Computing density-weighted density for {elem} {ion}...", end=' ', flush=True)
-        spec.get_dens_weighted_density(elem, ion)
+        from scripts.utils import compute_temp_density_chunked
+        
+        success, error_msg = compute_temp_density_chunked(
+            spec, elem, ion,
+            chunk_size=None,  # Auto-detect based on sightline count
+            verbose=True
+        )
+        
+        if not success:
+            print(f"\nWarning: {error_msg}")
+            print("(Temperature-density analysis will not be available)")
+    
     except Exception as e:
         print(f"\nWarning: Could not compute temperature/density: {e}")
         print("(Temperature-density analysis will not be available)")

@@ -182,17 +182,31 @@ def cmd_cgm(args):
         elem, ion, wave, name = config.get_line_info(line_code)
         print(f"  Computing {name} ({elem} {ion}, {wave} Å)...")
         spec.get_tau(elem, ion, wave)
+        spec.get_col_density(elem, ion)
     
     # Extract temperature and density data for the first line
     first_line = lines_to_compute[0]
     elem, ion, wave, name = config.get_line_info(first_line)
-    print(f"\nExtracting temperature and density data for {name}...")
-    spec.get_temp(elem, ion)
-    spec.get_density(elem, ion)
-    spec.get_dens_weighted_density(elem, ion)
+    
+    try:
+        from scripts.utils import compute_temp_density_chunked
+        
+        success, error_msg = compute_temp_density_chunked(
+            spec, elem, ion,
+            chunk_size=None,  # Auto-detect based on sightline count
+            verbose=True
+        )
+        
+        if not success:
+            print(f"\nWarning: {error_msg}")
+            print("(Temperature-density analysis will not be available)")
+    
+    except Exception as e:
+        print(f"\nWarning: Could not compute temperature/density: {e}")
+        print("(Temperature-density analysis will not be available)")
     
     # Save spectra
-    print("Saving spectra to HDF5...")
+    print("\nSaving spectra to HDF5...")
     spec.save_file()
     
     elapsed = time.time() - start_time
