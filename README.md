@@ -10,7 +10,7 @@ Comprehensive Python toolkit for analyzing the Lyman-alpha forest from cosmologi
 cd /path/to/CGM
 
 # Install dependencies
-pip install h5py numpy matplotlib scipy scikit-learn
+pip install h5py numpy matplotlib scipy scikit-learn pandas
 
 # For spectra generation (optional)
 pip install fake_spectra
@@ -25,14 +25,11 @@ python analyze_spectra.py list
 python analyze_spectra.py generate data/snap_080.hdf5 -n 10000
 
 # Analyze spectra
-python analyze_spectra.py analyze camel_lya_spectra_snap_080_n10000.hdf5
+python analyze_spectra.py analyze spectra/snap_080_spectra.hdf5
 
-# Compare multiple simulations (memory-efficient!)
-python analyze_spectra.py compare --mode detailed \
-    spectra/LH_80/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/LH_100/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/LH_200/camel_lya_spectra_snap_082_n10000.hdf5 \
-    -l 'LH_80,LH_100,LH_200'
+# Compare parameter variations with overlay plots
+python analyze_spectra.py compare 'spectra/1P/1P_p1_*/snap_080_spectra.hdf5' \
+    --param Omega_m --fiducial 1P_0 --name omega_scan
 ```
 
 ---
@@ -51,6 +48,13 @@ Explore HDF5 file structure (snapshots or spectra)
 python analyze_spectra.py explore data/snap_080.hdf5 -d 2
 ```
 
+### `generate-sightlines`
+Generate master sightlines for consistent parameter scans
+```bash
+python analyze_spectra.py generate-sightlines <name> -n 10000 --seed 42
+```
+**Output**: `output/sightlines/<name>.hdf5` with positions, axes, and metadata
+
 ### `generate`
 Generate synthetic spectra from simulation snapshot
 
@@ -60,6 +64,7 @@ Generate synthetic spectra from simulation snapshot
 - `--line`: Spectral lines (default: lya)
   - Single: `--line lya`
   - Multiple: `--line lya,civ,ovi`
+- `--sightlines-from`: Use pre-generated sightlines from file
 - `-o, --output`: Output file path
 
 **Examples:**
@@ -67,11 +72,12 @@ Generate synthetic spectra from simulation snapshot
 # Basic IGM spectra
 python analyze_spectra.py generate data/snap_080.hdf5 -n 10000
 
+# Use consistent sightlines across simulations
+python analyze_spectra.py generate 'data/1P/1P_p1_*/snap_080.hdf5' \
+  --sightlines-from output/sightlines/snap80_omega.hdf5 --line lya
+
 # Multi-line analysis
 python analyze_spectra.py generate data/snap_080.hdf5 -n 10000 --line lya,civ,ovi
-
-# Custom resolution
-python analyze_spectra.py generate data/snap_080.hdf5 -n 5000 --res 0.05
 ```
 
 ### `analyze`
@@ -81,7 +87,7 @@ Comprehensive analysis of spectra file
 - Flux statistics and sample spectra
 - Effective optical depth τ_eff
 - Flux power spectrum P_F(k)
-- Column density distribution f(N_HI)
+- Column density distribution f(N_HI) using accurate pre-computed values
 - Line width distribution b(N_HI) and temperatures (if T/ρ available)
 - Temperature-density relation T(ρ) (if available)
 - Metal line statistics (if multi-line data)
@@ -91,116 +97,66 @@ Comprehensive analysis of spectra file
 python analyze_spectra.py analyze spectra_file.hdf5
 ```
 
-**Output:** 8-12 plots in `plots/` directory
+**Output**: 
+- Plots in `plots/<suite>/<sim_set>/<sim_name>/snap-<N>/`
+- Data export in `output/analysis/<suite>/<sim_set>/<sim_name>/snap-<N>/`
+  - `analysis_results.json` (full results)
+  - CSV files: `power_spectrum.csv`, `cddf.csv`, `flux_stats.csv`, etc.
 
 ### `compare`
-Compare multiple simulations with three analysis modes
+Compare multiple simulations with overlay plots and fiducial ratios
 
 **Options:**
-- `-l, --labels`: Comma-separated labels
-- `-o, --output`: Output directory
-- `--mode {quick,detailed,full}`: Analysis depth
-
-**Modes:**
-
-**Quick** (~30s): Basic 6-panel comparison
-```bash
-python analyze_spectra.py compare --mode quick \
-    file1.hdf5 file2.hdf5 file3.hdf5
-```
-
-**Detailed** (~2 min):
-
-```bash
-python analyze_spectra.py compare --mode detailed \
-    --output plots/my_comparison \
-    file1.hdf5 file2.hdf5 file3.hdf5 file4.hdf5 file5.hdf5 file6.hdf5 \
-    -l 'LH_80,LH_100,LH_200,LH_300,LH_400,LH_500'
-```
-
-**Output files (detailed mode):**
-- `comparison_basic.png` - Original 6-panel plot
-- `comparison_enhanced.png` - 10-panel with box plots, ratios, sample spectra
-- `flux_distributions.png` - CDFs, QQ-plots, histograms, box plots
-- `power_spectrum_ratios.png` - Scale-dependent differences
-- `correlation_matrices.png` - Observable correlations per simulation
-- `statistical_tests.txt` - Comprehensive test results with p-values
-
-**Full** (~5-10 min): Complete exploratory analysis
-
-```bash
-python analyze_spectra.py compare --mode full \
-    file1.hdf5 file2.hdf5 file3.hdf5 \
-    -l 'Sim1,Sim2,Sim3'
-```
-
-**Additional output files (full mode):**
-- `feature_comparison.png` - 9-panel feature analysis
-- `physics_regimes.png` - Analysis by absorption strength
-- `spectra_clustering.png` - PCA and t-SNE projections
-- `pairwise_ks_matrix.png` - N×N significance heatmap
-
-**Example: Cross-Simulation Parameter Study**
-```bash
-python analyze_spectra.py compare --mode full \
-    spectra/IllustrisTNG/LH/LH_80/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/IllustrisTNG/LH/LH_100/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/IllustrisTNG/LH/LH_200/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/IllustrisTNG/LH/LH_300/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/IllustrisTNG/LH/LH_400/camel_lya_spectra_snap_082_n10000.hdf5 \
-    spectra/IllustrisTNG/LH/LH_500/camel_lya_spectra_snap_082_n10000.hdf5 \
-    -l 'LH_80,LH_100,LH_200,LH_300,LH_400,LH_500' \
-    -o plots/cross_simulation_study
-```
-
-### `evolve`
-Track redshift evolution of observables
-
-**Options:**
-- `-l, --labels`: Comma-separated redshift labels
-- `-o, --output`: Output plot path
-- `--mode {quick,detailed,full}`: Analysis depth (same as compare)
+- `<pattern>`: Glob pattern for spectra files (use quotes!)
+- `--param`: Parameter name for auto-labeling (e.g., Omega_m, sigma_8)
+- `--fiducial`: Reference simulation name for ratio plots
+- `--name`: Output name for comparison plots
+- `--precomputed`: Use pre-computed analysis data (faster)
 
 **Example:**
 ```bash
-python analyze_spectra.py evolve --mode detailed \
-    spectra_snap_076.hdf5 \
-    spectra_snap_078.hdf5 \
-    spectra_snap_080.hdf5 \
-    spectra_snap_082.hdf5 \
-    spectra_snap_084.hdf5 \
-    -l "z=3.5,z=3.0,z=2.5,z=2.0,z=1.5" \
-    -o plots/thermal_evolution
+# Compare Ωₘ variations with auto-labeling
+python analyze_spectra.py compare 'spectra/1P/1P_p1_*/snap_080_spectra.hdf5' \
+  --param Omega_m --fiducial 1P_0 --name omega_scan_z0
 ```
 
-**Output:** Evolution plots showing τ_eff(z), <F>(z), T₀(z), γ(z)
+**Output**: `plots/comparison/<name>/`
+- `power_spectrum_overlay.png` - P(k) curves with ratio panel
+- `cddf_overlay.png` - f(N_HI) distributions
+- `flux_stats_comparison.png` - Bar chart comparison
+- `tau_eff_comparison.png` - Effective optical depths
+- `sample_spectra_comparison.png` - Side-by-side spectra
+
+**Features**:
+- Auto-labeling from CAMEL parameter CSV files
+- Fiducial ratios show deviations from reference
+- Loads pre-computed data from `output/analysis/` (if available)
+- Falls back to on-the-fly computation if needed
+
+### `evolve`
+Track redshift evolution of observables across multiple snapshots
+
+**Example:**
+```bash
+python analyze_spectra.py evolve \
+    spectra_snap_076.hdf5 spectra_snap_080.hdf5 spectra_snap_084.hdf5 \
+    -l "z=3.5,z=2.5,z=1.5" -o plots/evolution
+```
 
 ### `diagnose`
 Deep diagnostic analysis of a single spectra file
 
-**Options:**
-- `--features`: Extract spectral features (void sizes, line widths, clustering)
-- `--distribution`: Detailed flux distribution analysis
-
 **Example:**
 ```bash
-python analyze_spectra.py diagnose spectra.hdf5 \
-    --features \
-    --distribution \
-    --output plots/diagnostics
+python analyze_spectra.py diagnose spectra.hdf5 --output plots/diagnostics
 ```
-
-**Output:**
-- Feature extraction plots
-- Flux distribution analysis
-- Detailed statistics
 
 ### `pipeline`
 Full pipeline: generate + analyze in one command
 
 **Example:**
 ```bash
-python analyze_spectra.py pipeline data/snap_080.hdf5 -n 10000 --res 0.1
+python analyze_spectra.py pipeline data/snap_080.hdf5 -n 10000
 ```
 
 ### `halo`
@@ -272,10 +228,16 @@ camel_lya_spectra_snap_XXX_nXXXX.hdf5
 │   ├── H/1/1215              # HI Lyα
 │   ├── C/4/1548              # CIV (if requested)
 │   └── O/6/1031              # OVI (if requested)
+├── colden/                   # Accurate column densities
+│   ├── H/1                   # HI column density [cm^-2]
+│   ├── C/4                   # CIV (if requested)
+│   └── O/6                   # OVI (if requested)
 ├── temperature/H/1/          # Temperature field
 ├── density_weight_density/H/1/  # Density field
-├── flux                      # Transmitted flux
-└── wavelength                # Wavelength array
+└── Sightlines/               # Sightline metadata
+    ├── positions             # 3D positions [ckpc/h]
+    ├── axes                  # Axis indices (1=x, 2=y, 3=z)
+    └── seed                  # Random seed used
 ```
 
 ### Plot Outputs
@@ -283,120 +245,79 @@ camel_lya_spectra_snap_XXX_nXXXX.hdf5
 **Structure**: Plots are automatically organized by simulation structure:
 ```
 plots/
-├── IllustrisTNG/
-│   └── LH/
-│       ├── LH_80/
-│       │   ├── camel_*.png
-│       │   ├── cgm/
-│       │   │   └── camel_*.png
-│       │   └── halos/
-│       │       └── halo_*_summary_*.png
-│       └── LH_100/
-│           └── ...
-└── comparisons/
-    └── comparison_*.png
+├── <suite>/
+│   └── <sim_set>/
+│       └── <sim_name>/
+│           └── snap-XXX/
+│               ├── sample_spectra_*.png
+│               ├── flux_statistics_*.png
+│               ├── flux_power_spectrum_*.png
+│               ├── column_density_distribution_*.png
+│               ├── line_width_distribution_*.png
+│               ├── temperature_density_relation_*.png
+│               └── multi_line_comparison_*.png
+└── comparison/
+    └── <name>/
+        ├── power_spectrum_overlay.png
+        ├── cddf_overlay.png
+        ├── flux_stats_comparison.png
+        ├── tau_eff_comparison.png
+        └── sample_spectra_comparison.png
+
+output/
+├── sightlines/
+│   └── <name>.hdf5                # Master sightlines
+└── analysis/
+    └── <suite>/<sim_set>/<sim_name>/snap-XXX/
+        ├── analysis_results.json   # Full results
+        ├── power_spectrum.csv
+        ├── cddf.csv
+        ├── flux_stats.csv
+        ├── line_widths.csv
+        ├── temp_density.csv
+        └── metal_lines.csv
 ```
-
-**Basic analysis:**
-- `sample_spectra_*.png`
-- `flux_statistics_*.png`
-- `flux_power_spectrum_*.png`
-- `column_density_distribution_*.png`
-
-**Advanced analysis:**
-- `line_width_distribution_*.png`
-- `temperature_density_relation_*.png`
-- `multi_line_comparison_*.png`
-
-**CGM/Halo analysis:**
-- `halo_*_summary_*.png` - Individual halo properties
-- CGM spectra plots in `cgm/` subdirectory
-
-**Comparison (detailed mode):**
-- `comparison_basic.png` (6 panels)
-- `comparison_enhanced.png` (10 panels)
-- `flux_distributions.png` (4 panels)
-- `power_spectrum_ratios.png`
-- `correlation_matrices.png`
-- `statistical_tests.txt`
-
-**Comparison (full mode):**
-- All detailed mode files plus:
-- `feature_comparison.png` (9 panels)
-- `physics_regimes.png`
-- `spectra_clustering.png`
-- `pairwise_ks_matrix.png`
 
 ---
 
 ## Common Workflows
 
-### 1. Quick Test (10 min)
+### 1. Single Simulation Analysis
 ```bash
-# Generate small dataset
-python analyze_spectra.py generate data/snap_080.hdf5 -n 100
-
-# Analyze
-python analyze_spectra.py analyze camel_lya_spectra_snap_080_n100.hdf5
+# Generate and analyze
+python analyze_spectra.py generate data/snap_080.hdf5 -n 10000 --line lya
+python analyze_spectra.py analyze spectra/snap_080_spectra.hdf5
 ```
 
-### 2. Production Analysis
+### 2. Parameter Scan with Identical Sightlines
 ```bash
-# Generate 10k sightlines with multiple lines
+# Step 1: Generate master sightlines
+python analyze_spectra.py generate-sightlines snap80_omega -n 10000 --seed 42
+
+# Step 2: Generate spectra for all Ωₘ variations (using same sightlines)
+python analyze_spectra.py generate 'data/1P/1P_p1_*/snap_080.hdf5' \
+  --sightlines-from output/sightlines/snap80_omega.hdf5 --line lya
+
+# Step 3: Analyze all simulations
+python analyze_spectra.py analyze 'spectra/1P/1P_p1_*/snap_080_spectra.hdf5'
+
+# Step 4: Compare with overlay plots and fiducial ratios
+python analyze_spectra.py compare 'spectra/1P/1P_p1_*/snap_080_spectra.hdf5' \
+  --param Omega_m --fiducial 1P_0 --name omega_scan_z0
+```
+
+### 3. Multi-Line CGM Study
+```bash
+# Generate spectra with multiple ions
 python analyze_spectra.py generate data/snap_080.hdf5 \
-    -n 10000 \
-    --line lya,civ,ovi
+    -n 10000 --line lya,civ,ovi
 
-# Full analysis
-python analyze_spectra.py analyze camel_lya_spectra_snap_080_n10000.hdf5
+# Full analysis (includes metal line statistics)
+python analyze_spectra.py analyze spectra/snap_080_spectra.hdf5
 ```
 
-### 3. Parameter Study with Enhanced Comparison
+### 4. CGM-Targeted Study
 ```bash
-# Generate spectra for 6 parameter variations
-for lh in 80 100 200 300 400 500; do
-    python analyze_spectra.py generate \
-        data/IllustrisTNG/LH/LH_${lh}/snap_082.hdf5 \
-        -n 10000 \
-        -o spectra_LH_${lh}.hdf5
-done
-
-# Compare with full exploratory analysis
-python analyze_spectra.py compare --mode full \
-    spectra_LH_*.hdf5 \
-    -l "LH_80,LH_100,LH_200,LH_300,LH_400,LH_500" \
-    -o plots/parameter_study
-
-# Review outputs
-cat plots/parameter_study/statistical_tests.txt
-open plots/parameter_study/comparison_enhanced.png
-open plots/parameter_study/feature_comparison.png
-```
-
-### 4. Redshift Evolution Study
-```bash
-# Generate at multiple redshifts
-for snap in 076 078 080 082 084 086 088 090; do
-    python analyze_spectra.py generate \
-        data/LH_80/snap_${snap}.hdf5 \
-        -n 10000 \
-        -o spectra_snap_${snap}.hdf5
-done
-
-# Track evolution with detailed analysis
-python analyze_spectra.py evolve --mode detailed \
-    spectra_snap_*.hdf5 \
-    -l "z=3.5,z=3.2,z=2.9,z=2.5,z=2.2,z=1.9,z=1.6,z=1.3" \
-    -o plots/thermal_history
-```
-
-### 5. CGM-Targeted Study
-```bash
-# First, analyze halos to identify interesting targets
-python analyze_spectra.py halo data/snap_082.hdf5 \
-    --mass-range 11.0 12.0 \
-    --n-halos 10
-
 # Generate IGM spectra (random sightlines)
 python analyze_spectra.py generate data/snap_082.hdf5 -n 10000
 
@@ -406,12 +327,11 @@ python analyze_spectra.py cgm data/snap_082.hdf5 \
     --impact-params 0.5,1.0,1.5 \
     --n-per-bin 100
 
-# Compare IGM vs CGM
-python analyze_spectra.py compare --mode detailed \
-    camel_lya_spectra_snap_082_n10000.hdf5 \
-    cgm_lya_spectra_snap_082_n300.hdf5 \
-    -l "IGM,CGM" \
-    -o plots/igm_vs_cgm
+# Compare IGM vs CGM with overlay plots
+python analyze_spectra.py compare \
+    'spectra/snap_082_spectra.hdf5' \
+    'spectra/cgm/cgm_snap_082_spectra.hdf5' \
+    --name igm_vs_cgm
 ```
 
 ---
@@ -452,17 +372,18 @@ SPECTRAL_LINES = {
 
 ```
 CGM/
-├── analyze_spectra.py          # Main CLI entry point (214 lines)
-├── batch_process.py            # Batch processing utility (363 lines)
-├── downloader.py               # CAMEL data downloader (234 lines)
+├── analyze_spectra.py          # Main CLI entry point
+├── batch_process.py            # Batch processing utility
+├── downloader.py               # CAMEL data downloader
 ├── scripts/
-│   ├── config.py              # Configuration & spectral line database (408 lines)
-│   ├── utils.py               # Analysis functions (1700+ lines)
-│   ├── analysis.py            # Core analysis routines
-│   ├── plotting.py            # Visualization functions
-│   ├── comparison.py          # Memory-efficient comparison (1000+ lines)
-│   ├── statistical_tests.py   # Statistical framework (200+ lines)
-│   ├── exploratory.py         # Feature extraction & clustering (500+ lines)
+│   ├── config.py              # Configuration & spectral line database
+│   ├── utils.py               # Core analysis functions
+│   ├── analysis.py            # Analysis routines (uses accurate colden)
+│   ├── plotting.py            # Visualization (including overlay plots)
+│   ├── sightline_manager.py  # Sightline generation & management
+│   ├── label_generator.py    # Auto-labeling from CAMEL parameters
+│   ├── data_export.py         # Export results (JSON + CSV)
+│   ├── comparison.py          # Statistical comparison framework
 │   ├── hdf5_io.py            # HDF5 I/O utilities
 │   ├── fake_spectra_fix.py   # Python 3.13 compatibility patches
 │   ├── cgm/
@@ -470,24 +391,18 @@ CGM/
 │   │   ├── targeted_spectra.py  # CGM spectra generation
 │   │   └── visualization.py   # CGM-specific plots
 │   └── commands/
-│       ├── analyze.py        # Analyze command implementation
-│       ├── compare_evolve.py # Compare, evolve & diagnose commands
-│       ├── generate.py       # Generate command implementation
-│       ├── cgm.py           # CGM command implementation
-│       ├── halo.py          # Halo command implementation
-│       ├── list_explore.py  # List & explore commands
-│       └── pipeline.py      # Pipeline command implementation
-├── slurm_templates/           # HPC SLURM job templates
-│   ├── generate_spectra.sbatch
-│   ├── analyze_spectra.sbatch
-│   └── batch_pipeline.sbatch
-├── plots/                     # Output plots (organized by suite/set/sim)
+│       ├── generate_sightlines.py  # Sightline generation command
+│       ├── analyze.py        # Analyze command
+│       ├── compare.py        # Compare command (overlay plots)
+│       ├── generate.py       # Generate command (with colden)
+│       ├── cgm.py           # CGM command
+│       ├── halo.py          # Halo command
+│       └── pipeline.py      # Pipeline command
+├── plots/                     # Output plots
 ├── spectra/                   # Generated spectra files
-├── output/                    # Other output files
-└── data/                      # Simulation data (snapshots & group catalogs)
+├── output/                    # Analysis data & sightlines
+└── data/                      # Simulation snapshots
 ```
-
-**Total**: ~8,000 lines of Python code
 
 ---
 
@@ -524,39 +439,32 @@ python downloader.py --suite IllustrisTNG --set LH --sim 80 --snapshot 82 \
 
 ---
 
-## Documentation
+## Key Features
 
-- **README.md**: This file (overview and usage)
-- **AGENTS.md**: Code guidelines and conventions for developers
-- **Meeting-minutes.md**: Project meeting notes
+### Identical Sightlines for Parameter Scans
+- Generate master sightlines once, reuse for all simulations
+- Ensures fair comparison across parameter variations
+- Eliminates sample variance
 
-Additional documentation may be available in the project directory.
+### Accurate Column Densities
+- Uses fake_spectra's pre-computed `colden` datasets
+- More accurate than tau-based estimation
+- Automatically saved during generation and used in analysis
 
----
+### Auto-Labeling
+- Reads CAMEL parameter CSV files
+- Generates formatted labels (e.g., "Ωₘ = 0.3")
+- Detects which parameter varies across simulations
 
-## Memory Optimization Details
+### Overlay Plots with Fiducial Ratios
+- Compare multiple simulations on single plots
+- Optional ratio panels show deviations from reference
+- Professional styling with color cycling
 
-**Problem**: Out of memory when comparing 6 simulations × 10,000 spectra
-- Original requirement: ~10 GB RAM
-- Failed on HPC login nodes
-
-**Solution**: Lazy loading + chunked processing
-- New requirement: ~200 MB RAM
-- **98% memory reduction** (50× less)
-
-**Method**:
-- Load data on-demand in chunks of 1,000 spectra
-- Sample 100,000 pixels for statistical tests (still highly robust)
-- Process features incrementally without approximation
-- Keep files on disk, not in RAM
-
-**Preserved**:
-- ✅ All visualizations (same quality)
-- ✅ Statistical significance (p-values still < 1e-70)
-- ✅ Feature accuracy (processes all data, just chunked)
-- ✅ Backward compatibility
-
-**See**: `MEMORY_OPTIMIZATION.md` for full technical details
+### Data Export
+- JSON: Full analysis results with metadata
+- CSV: Individual data tables for each observable
+- Organized by suite/sim_set/sim_name/snapshot hierarchy
 
 ---
 
