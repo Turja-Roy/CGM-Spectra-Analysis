@@ -66,16 +66,46 @@ def cmd_generate(args):
     print(f"Box size:      {metadata['boxsize_proper']:.2f} Mpc/h")
     print(f"Gas particles: {metadata['num_gas']:,}")
 
-    # Generate random sightlines
-    print(f"\n[2/5] Generating {num_sightlines} random sightlines...")
-    np.random.seed(random_seed)
-
+    # Generate or load sightlines
+    print(f"\n[2/5] Setting up sightlines...")
     boxsize = metadata['boxsize']  # comoving kpc/h
-    cofm = np.random.uniform(0, boxsize, size=(num_sightlines, 3))
-    axis = np.random.randint(1, 4, size=num_sightlines)
-
-    print("Positions: random uniform across box")
-    print("Axes: random (x, y, or z)")
+    
+    # Load sightlines if specified
+    if hasattr(args, 'sightlines_from') and args.sightlines_from:
+        from scripts.sightline_manager import load_sightlines_hdf5, validate_sightlines
+        
+        print(f"Loading sightlines from: {args.sightlines_from}")
+        sightlines = load_sightlines_hdf5(args.sightlines_from)
+        validate_sightlines(sightlines, boxsize)
+        
+        cofm = sightlines['positions']
+        axis = sightlines['axes']
+        
+        # Override num_sightlines with loaded count
+        num_sightlines = len(cofm)
+        
+        print(f"Loaded {num_sightlines} sightlines")
+        print(f"  Positions range: [{cofm.min():.1f}, {cofm.max():.1f}] ckpc/h")
+        
+        # Count axes distribution
+        n_x = np.sum(axis == 1)
+        n_y = np.sum(axis == 2)
+        n_z = np.sum(axis == 3)
+        print(f"  Axes: x={n_x}, y={n_y}, z={n_z}")
+        
+        sightlines_source = args.sightlines_from
+    else:
+        # Generate random sightlines
+        print(f"Generating {num_sightlines} random sightlines...")
+        np.random.seed(random_seed)
+        
+        cofm = np.random.uniform(0, boxsize, size=(num_sightlines, 3))
+        axis = np.random.randint(1, 4, size=num_sightlines)
+        
+        print("Positions: random uniform across box")
+        print("Axes: random (x, y, or z)")
+        
+        sightlines_source = 'random'
 
     # Apply fake_spectra bugfixes
     print("\n[3/5] Initializing fake_spectra (applying Python 3.13 bugfixes)...")
@@ -148,9 +178,14 @@ def cmd_generate(args):
             if tau is None:
                 print(f"FAILED (tau not computed)")
                 return 1
+            
+            spec.get_col_density(elem, ion)
+            colden = spec.colden.get((elem, ion))
+            if colden is None:
+                print(f"WARNING: colden not computed")
 
             line_elapsed = time.time() - line_start
-            print(f"OK ({line_elapsed:.1f}s, shape={tau.shape})")
+            print(f"OK ({line_elapsed:.1f}s, tau={tau.shape}, colden={colden.shape if colden is not None else 'None'})")
 
         except MemoryError:
             print(f"\nError: Out of memory computing {name}")
@@ -190,6 +225,17 @@ def cmd_generate(args):
         return 1
 
     output_path = spec.savefile
+    
+    # Save sightlines in spectra HDF5
+    from scripts.sightline_manager import save_sightlines_in_spectra
+    metadata_sightlines = {
+        'seed': random_seed,
+        'source': sightlines_source,
+        'box_size': boxsize
+    }
+    save_sightlines_in_spectra(output_path, cofm, axis, metadata_sightlines)
+    print(f"Saved sightlines to /Sightlines/ group in spectra file")
+    
     print(f"\n{'=' * 70}")
     print(f"Spectra saved to:")
     print(f"  {output_path}")
