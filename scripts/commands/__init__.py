@@ -1,7 +1,8 @@
 from .list_explore import cmd_list, cmd_explore
 from .generate import cmd_generate
 from .analyze import cmd_analyze
-from .compare_evolve import cmd_compare, cmd_evolve, cmd_diagnose
+from .compare import cmd_compare
+from .compare_evolve import cmd_evolve, cmd_diagnose
 from .pipeline import cmd_pipeline
 from .halo import cmd_halo
 from .cgm import cmd_cgm

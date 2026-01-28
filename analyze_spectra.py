@@ -14,6 +14,7 @@ from scripts.commands import (
     cmd_halo,
     cmd_cgm,
 )
+from scripts.commands.generate_sightlines import cmd_generate_sightlines
 
 
 def main():
@@ -76,6 +77,18 @@ Documentation:
         'spectra_file', help='Path to HDF5 file to explore')
     parser_explore.set_defaults(func=cmd_explore)
 
+    parser_gen_sightlines = subparsers.add_parser(
+        'generate-sightlines', help='Generate and save master sightlines for consistent comparison')
+    parser_gen_sightlines.add_argument(
+        'name', help='Output name (without extension)')
+    parser_gen_sightlines.add_argument('-n', '--sightlines', type=int, default=10000,
+                                       help='Number of sightlines to generate (default: 10000)')
+    parser_gen_sightlines.add_argument('--seed', type=int, default=42,
+                                       help='Random seed for reproducibility (default: 42)')
+    parser_gen_sightlines.add_argument('--box-size', type=float, default=25000.0,
+                                       help='Simulation box size in comoving kpc/h (default: 25000.0)')
+    parser_gen_sightlines.set_defaults(func=cmd_generate_sightlines)
+
     parser_gen = subparsers.add_parser(
         'generate', help='Generate spectra from snapshot')
     parser_gen.add_argument(
@@ -88,6 +101,8 @@ Documentation:
                             help='Spectral line(s) to compute: lya,lyb,heii,civ,ovi,mgii,siiv (comma-separated, default: lya)')
     parser_gen.add_argument('--seed', type=int, default=42,
                             help='Random seed (default: 42)')
+    parser_gen.add_argument('--sightlines-from', type=str, default=None,
+                            help='Load sightlines from HDF5 file (overrides -n and --seed)')
     parser_gen.add_argument('-o', '--output', type=str, default=None,
                             help='Output file path (default: auto-generated)')
     parser_gen.set_defaults(func=cmd_generate)
@@ -111,13 +126,15 @@ Documentation:
     parser_compare = subparsers.add_parser('compare',
                                            help='Compare multiple simulation runs (same z, different parameters)')
     parser_compare.add_argument('spectra_files', nargs='+',
-                                help='Paths to spectra HDF5 files to compare')
+                                help='Paths to spectra HDF5 files (supports glob patterns)')
     parser_compare.add_argument('-l', '--labels', type=str, default=None,
                                 help='Comma-separated labels for simulations (default: auto-generated)')
-    parser_compare.add_argument('-o', '--output', type=str, default=None,
-                                help='Output directory or file path (default: plots/comparisons/)')
-    parser_compare.add_argument('--mode', type=str, default='quick', choices=['quick', 'detailed', 'full'],
-                                help='Analysis mode: quick (basic), detailed (enhanced plots), full (all analyses)')
+    parser_compare.add_argument('--param', type=str, default=None,
+                                help='Parameter name for auto-labeling (e.g., omega0, sigma8)')
+    parser_compare.add_argument('--fiducial', type=str, default=None,
+                                help='Fiducial simulation name or pattern (for ratio plots)')
+    parser_compare.add_argument('--name', type=str, default=None,
+                                help='Comparison name for output directory (default: auto-generated)')
     parser_compare.set_defaults(func=cmd_compare)
 
     parser_evolve = subparsers.add_parser('evolve',

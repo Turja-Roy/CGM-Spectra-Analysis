@@ -403,3 +403,277 @@ def plot_temperature_density_relation(tdens_dict, redshift, output_path, title=N
     plt.tight_layout()
     save_plot(fig, output_path)
     plt.close()
+
+
+# ============================================================================ #
+# COMPARISON/OVERLAY PLOTTING FUNCTIONS
+# ============================================================================ #
+
+def plot_power_spectrum_overlay(power_dicts, labels, output_path, redshift=None, 
+                                  fiducial_idx=None, title=None):
+    """Plot power spectra from multiple simulations overlaid with optional ratio panel."""
+    import matplotlib.pyplot as plt
+    from matplotlib import colors as mcolors
+    import numpy as np
+    
+    setup_plot_style()
+    
+    # Create figure with two panels: power spectrum and ratio
+    if fiducial_idx is not None:
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8), 
+                                 gridspec_kw={'height_ratios': [3, 1], 'hspace': 0.05})
+        ax_main, ax_ratio = axes
+    else:
+        fig, ax_main = plt.subplots(1, 1, figsize=(10, 6))
+        ax_ratio = None
+    
+    # Get colors
+    colors = plt.cm.tab10(np.linspace(0, 1, len(power_dicts)))
+    
+    # Plot each power spectrum
+    for i, (power_dict, label) in enumerate(zip(power_dicts, labels)):
+        k = power_dict['k']
+        kPk_pi = power_dict.get('kPk_pi', k * power_dict['P_k_mean'] / np.pi)
+        
+        # Plot main data
+        linestyle = '--' if i == fiducial_idx else '-'
+        linewidth = 2.5 if i == fiducial_idx else 1.5
+        ax_main.plot(k, kPk_pi, label=label, color=colors[i], 
+                     linestyle=linestyle, linewidth=linewidth, alpha=0.8)
+        
+        # Add error bars if available
+        if 'kPk_pi_err' in power_dict:
+            ax_main.fill_between(k, 
+                                  kPk_pi - power_dict['kPk_pi_err'],
+                                  kPk_pi + power_dict['kPk_pi_err'],
+                                  color=colors[i], alpha=0.2)
+        
+        # Plot ratio if fiducial is specified
+        if ax_ratio is not None and fiducial_idx is not None and i != fiducial_idx:
+            k_fid = power_dicts[fiducial_idx]['k']
+            kPk_pi_fid = power_dicts[fiducial_idx].get('kPk_pi', 
+                                                         k_fid * power_dicts[fiducial_idx]['P_k_mean'] / np.pi)
+            
+            # Interpolate to match k values if needed
+            if len(k) != len(k_fid) or not np.allclose(k, k_fid):
+                kPk_pi_fid_interp = np.interp(k, k_fid, kPk_pi_fid)
+            else:
+                kPk_pi_fid_interp = kPk_pi_fid
+            
+            ratio = kPk_pi / kPk_pi_fid_interp
+            ax_ratio.plot(k, ratio, color=colors[i], linewidth=1.5, alpha=0.8)
+    
+    # Format main axis
+    ax_main.set_xscale('log')
+    ax_main.set_yscale('log')
+    if ax_ratio is None:
+        ax_main.set_xlabel('k [s/km]', fontsize=12)
+    else:
+        ax_main.set_xticklabels([])
+    ax_main.set_ylabel('k P(k) / π', fontsize=12)
+    ax_main.grid(True, alpha=0.3, which='both')
+    ax_main.legend(fontsize=9, loc='best', framealpha=0.9)
+    
+    if title:
+        ax_main.set_title(title, fontsize=14)
+    elif redshift is not None:
+        ax_main.set_title(f'Flux Power Spectrum (z = {redshift:.3f})', fontsize=14)
+    
+    # Format ratio axis
+    if ax_ratio is not None:
+        ax_ratio.axhline(1, color='black', linestyle='--', linewidth=1.5, alpha=0.5)
+        ax_ratio.set_xscale('log')
+        ax_ratio.set_xlabel('k [s/km]', fontsize=12)
+        ax_ratio.set_ylabel(f'Ratio to\n{labels[fiducial_idx]}', fontsize=10)
+        ax_ratio.grid(True, alpha=0.3, which='both')
+        ax_ratio.set_ylim([0.8, 1.2])
+    
+    plt.tight_layout()
+    save_plot(fig, output_path)
+    plt.close()
+
+
+def plot_cddf_overlay(cddf_dicts, labels, output_path, redshift=None, title=None):
+    """Plot column density distribution functions overlaid."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    setup_plot_style()
+    
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    
+    # Get colors
+    colors = plt.cm.tab10(np.linspace(0, 1, len(cddf_dicts)))
+    
+    # Plot each CDDF
+    for i, (cddf_dict, label) in enumerate(zip(cddf_dicts, labels)):
+        log_N = cddf_dict['log10_N_HI']
+        f_N = cddf_dict['f_N']
+        
+        # Only plot non-zero values
+        mask = f_N > 0
+        
+        ax.plot(log_N[mask], f_N[mask], label=label, color=colors[i], 
+                linewidth=2, alpha=0.8, marker='o', markersize=4)
+    
+    # Format axis
+    ax.set_xlabel('log₁₀(N_HI [cm⁻²])', fontsize=12)
+    ax.set_ylabel('f(N_HI) [cm²]', fontsize=12)
+    ax.set_yscale('log')
+    ax.grid(True, alpha=0.3, which='both')
+    ax.legend(fontsize=10, loc='best', framealpha=0.9)
+    
+    if title:
+        ax.set_title(title, fontsize=14)
+    elif redshift is not None:
+        ax.set_title(f'Column Density Distribution (z = {redshift:.3f})', fontsize=14)
+    
+    plt.tight_layout()
+    save_plot(fig, output_path)
+    plt.close()
+
+
+def plot_flux_stats_comparison(stats_list, labels, output_path, redshift=None, title=None):
+    """Plot comparison of flux statistics as bar charts."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    setup_plot_style()
+    
+    # Select key statistics to plot
+    key_stats = ['mean_flux', 'median_flux', 'mean_tau', 'transmission_fraction']
+    stat_labels = ['Mean Flux', 'Median Flux', 'Mean τ', 'Trans. Frac.']
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.flatten()
+    
+    colors = plt.cm.tab10(np.linspace(0, 1, len(stats_list)))
+    x_pos = np.arange(len(labels))
+    width = 0.8
+    
+    for idx, (stat_key, stat_label) in enumerate(zip(key_stats, stat_labels)):
+        ax = axes[idx]
+        
+        # Extract values
+        values = [stats[stat_key] for stats in stats_list]
+        
+        # Create bar chart
+        bars = ax.bar(x_pos, values, width, color=colors, alpha=0.7, edgecolor='black')
+        
+        # Format
+        ax.set_ylabel(stat_label, fontsize=11)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # Add value labels on bars
+        for i, (bar, val) in enumerate(zip(bars, values)):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{val:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    if title:
+        fig.suptitle(title, fontsize=14, y=0.98)
+    elif redshift is not None:
+        fig.suptitle(f'Flux Statistics Comparison (z = {redshift:.3f})', fontsize=14, y=0.98)
+    
+    plt.tight_layout()
+    save_plot(fig, output_path)
+    plt.close()
+
+
+def plot_tau_eff_comparison(tau_eff_list, labels, output_path, redshift=None, title=None):
+    """Plot comparison of effective optical depths with error bars."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    setup_plot_style()
+    
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    
+    colors = plt.cm.tab10(np.linspace(0, 1, len(tau_eff_list)))
+    x_pos = np.arange(len(labels))
+    
+    # Extract values and errors
+    tau_eff_vals = [tau_dict['tau_eff'] for tau_dict in tau_eff_list]
+    tau_eff_errs = [tau_dict['tau_eff_err'] for tau_dict in tau_eff_list]
+    
+    # Create bar chart with error bars
+    bars = ax.bar(x_pos, tau_eff_vals, color=colors, alpha=0.7, 
+                  edgecolor='black', linewidth=1.5)
+    ax.errorbar(x_pos, tau_eff_vals, yerr=tau_eff_errs, fmt='none', 
+                color='black', capsize=5, linewidth=2)
+    
+    # Format
+    ax.set_ylabel('τ_eff', fontsize=14)
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=10)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels
+    for i, (bar, val, err) in enumerate(zip(bars, tau_eff_vals, tau_eff_errs)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + err,
+               f'{val:.3f}±{err:.3f}', ha='center', va='bottom', fontsize=9)
+    
+    if title:
+        ax.set_title(title, fontsize=14)
+    elif redshift is not None:
+        ax.set_title(f'Effective Optical Depth (z = {redshift:.3f})', fontsize=14)
+    
+    plt.tight_layout()
+    save_plot(fig, output_path)
+    plt.close()
+
+
+def plot_sample_spectra_comparison(flux_arrays, labels, velocity, output_path, 
+                                     n_samples=5, redshift=None, title=None):
+    """Plot sample spectra from multiple simulations for same sightlines."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    setup_plot_style()
+    
+    n_sims = len(flux_arrays)
+    n_samples = min(n_samples, flux_arrays[0].shape[0])
+    
+    fig, axes = plt.subplots(n_samples, 1, figsize=(12, 2.5 * n_samples), sharex=True)
+    
+    if n_samples == 1:
+        axes = [axes]
+    
+    colors = plt.cm.tab10(np.linspace(0, 1, n_sims))
+    
+    # Select random sightlines (same for all simulations)
+    np.random.seed(42)
+    sample_indices = np.random.choice(flux_arrays[0].shape[0], n_samples, replace=False)
+    
+    for i, idx in enumerate(sample_indices):
+        ax = axes[i]
+        
+        for j, (flux, label) in enumerate(zip(flux_arrays, labels)):
+            alpha = 0.8 if j == 0 else 0.6
+            linewidth = 2 if j == 0 else 1.5
+            ax.plot(velocity, flux[idx], label=label, color=colors[j], 
+                   alpha=alpha, linewidth=linewidth)
+        
+        ax.set_ylabel('Flux', fontsize=10)
+        ax.set_ylim([-0.05, 1.1])
+        ax.grid(True, alpha=0.3)
+        ax.text(0.98, 0.95, f'Sightline {idx}', transform=ax.transAxes,
+               ha='right', va='top', fontsize=9,
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+        
+        if i == 0:
+            ax.legend(fontsize=8, loc='upper left', ncol=min(3, n_sims))
+    
+    axes[-1].set_xlabel('Velocity [km/s]', fontsize=12)
+    
+    if title:
+        fig.suptitle(title, fontsize=14, y=0.995)
+    elif redshift is not None:
+        fig.suptitle(f'Sample Spectra Comparison (z = {redshift:.3f})', fontsize=14, y=0.995)
+    
+    plt.tight_layout()
+    save_plot(fig, output_path)
+    plt.close()
