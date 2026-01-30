@@ -189,7 +189,7 @@ def cmd_cgm(args):
     elem, ion, wave, name = config.get_line_info(first_line)
     
     try:
-        from scripts.utils import compute_temp_density_chunked
+        from scripts.fake_spectra_fix import compute_temp_density_chunked
         
         success, error_msg = compute_temp_density_chunked(
             spec, elem, ion,

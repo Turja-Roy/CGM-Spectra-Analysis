@@ -2,9 +2,6 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-import h5py
-
-import scripts.utils as utils
 
 
 # ===================== #

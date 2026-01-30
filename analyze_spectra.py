@@ -114,11 +114,10 @@ Documentation:
     parser_analyze.add_argument('--line', type=str, default=None,
                                 help='Spectral line to analyze (auto-detect if not specified)')
     parser_analyze.add_argument('--cd-method', type=str, default='simple',
-                                choices=['simple', 'vpfit', 'hybrid'],
+                                choices=['simple', 'vpfit'],
                                 help='Column density calculation method: '
                                 'simple (pixel optical depth), '
-                                'vpfit (Voigt profile fitting), '
-                                'hybrid (simple detection + VPFIT fitting)')
+                                'vpfit (Voigt profile fitting)')
     parser_analyze.add_argument('--max-sightlines', type=int, default=None,
                                 help='Maximum number of sightlines to analyze (for memory-limited systems)')
     parser_analyze.set_defaults(func=cmd_analyze)

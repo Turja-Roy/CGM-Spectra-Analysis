@@ -1,3 +1,18 @@
+# ============================================================ #
+# DEPRECATED LEGACY FILE - DO NOT IMPORT
+# ============================================================ #
+# This file contains old utility functions that have been
+# migrated to other modules. It is kept for reference only.
+# 
+# Active functions have been moved to:
+# - scripts/fake_spectra_fix.py (compute_temp_density_chunked)
+# - scripts/commands/analyze.py (VoigtFit functions)
+# - scripts/analysis.py (analysis functions)
+# - scripts/plotting.py (plotting functions)
+#
+# Last updated: 2026-01-29
+# ============================================================ #
+
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
@@ -5,11 +20,8 @@ from pathlib import Path
 import os
 
 
-# ============== #
-# HDF5 UTILITIES #
-# ============== #
+# HDF5 UTILITIES
 
-# Load snapshot metadata from HDF5 file header.
 def load_snapshot_metadata(filepath):
     with h5py.File(filepath, 'r') as f:
         header = f['Header']
@@ -38,8 +50,6 @@ def load_snapshot_metadata(filepath):
 
     return metadata
 
-
-# Load gas particle properties from snapshot.
 def load_gas_properties(filepath, fields=None, stride=1, max_particles=None):
     with h5py.File(filepath, 'r') as f:
         if 'PartType0' not in f:
@@ -71,8 +81,6 @@ def load_gas_properties(filepath, fields=None, stride=1, max_particles=None):
 
     return data
 
-
-# Print the structure of an HDF5 snapshot file.
 def explore_hdf5_structure(filepath):
     structure = {'groups': [], 'header': {}}
 

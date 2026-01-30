@@ -5,9 +5,9 @@ from matplotlib import cm
 from matplotlib.colors import LogNorm
 
 
-# ===================#
+######################
 # PLOTTING UTILITIES #
-# ===================#
+######################
 
 def setup_plot_style():
     """Setup consistent matplotlib plotting style."""
@@ -58,7 +58,6 @@ def create_sample_spectra_plot(velocity, flux, redshift, n_samples=5, output_pat
     return fig, axes
 
 
-# Create comparison plot for multiple spectral lines.
 def plot_multi_line_comparison(line_stats_list, redshift, output_path, title=None):
     if len(line_stats_list) == 0:
         print("  Warning: No line statistics provided")
@@ -133,7 +132,6 @@ def plot_multi_line_comparison(line_stats_list, redshift, output_path, title=Non
     plt.close()
 
 
-# Create flux power spectrum plot.
 def plot_flux_power_spectrum(power_dict, redshift, output_path, title=None):
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -180,7 +178,6 @@ def plot_flux_power_spectrum(power_dict, redshift, output_path, title=None):
     plt.close()
 
 
-# Create column density distribution plot.
 def plot_column_density_distribution(cddf_dict, redshift, output_path, title=None):
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -242,7 +239,6 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
     plt.close()
 
 
-# Create line width (b-parameter) distribution plot.
 def plot_line_width_distribution(lwd_dict, redshift, output_path, title=None):
     if lwd_dict['n_absorbers'] == 0:
         print("Warning: No absorbers found for line width analysis")
@@ -341,7 +337,6 @@ def plot_line_width_distribution(lwd_dict, redshift, output_path, title=None):
     plt.close()
 
 
-# Create temperature-density relation plot.
 def plot_temperature_density_relation(tdens_dict, redshift, output_path, title=None):
     if tdens_dict['n_pixels'] < 100:
         print(
@@ -405,9 +400,9 @@ def plot_temperature_density_relation(tdens_dict, redshift, output_path, title=N
     plt.close()
 
 
-# ============================================================================ #
-# COMPARISON/OVERLAY PLOTTING FUNCTIONS
-# ============================================================================ #
+#########################################
+# COMPARISON/OVERLAY PLOTTING FUNCTIONS #
+#########################################
 
 def plot_power_spectrum_overlay(power_dicts, labels, output_path, redshift=None, 
                                   fiducial_idx=None, title=None):

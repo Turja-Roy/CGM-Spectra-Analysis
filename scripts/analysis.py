@@ -3,11 +3,10 @@ import os
 from pathlib import Path
 
 
-# ================#
-# DATA PROCESSING #
-# ================#
+#############################
+# DATA PROCESSING FUNCTIONS #
+#############################
 
-# Compute flux statistics from optical depth.
 def compute_flux_statistics(tau):
     flux = np.exp(-tau)
 
@@ -32,7 +31,6 @@ def compute_flux_statistics(tau):
     return stats
 
 
-# Compute 1D flux power spectrum P_F(k) with memory-efficient chunking.
 def compute_power_spectrum(flux, velocity_spacing, chunk_size=1000):
     n_sightlines, n_pixels = flux.shape
 
@@ -110,7 +108,6 @@ def get_snapshot_number(filepath):
     return None
 
 
-# Compute column density distribution f(N_HI) from optical depth.
 def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
     """
     Compute column density distribution f(N_HI).
@@ -218,7 +215,6 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
     }
 
 
-# Compute effective optical depth tau_eff from flux.
 def compute_effective_optical_depth(tau):
     flux = np.exp(-tau)
 
@@ -239,7 +235,6 @@ def compute_effective_optical_depth(tau):
     }
 
 
-# Compute line width (Doppler b-parameter) distribution from absorption features.
 def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
     """Compute line width (Doppler b-parameter) distribution."""
     from scipy.optimize import curve_fit
@@ -330,7 +325,6 @@ def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden
     }
 
 
-# Compute temperature-density (T-ρ) relation from IGM gas along sightlines.
 def compute_temperature_density_relation(temperature, density, tau, min_tau=0.1):
     # Flatten arrays and filter by optical depth
     temp_flat = temperature.flatten()
@@ -409,7 +403,6 @@ def compute_temperature_density_relation(temperature, density, tau, min_tau=0.1)
     }
 
 
-# Compute statistics for metal line absorption systems.
 def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', threshold=0.05, colden=None):
     """Compute statistics for metal line absorption systems."""
     n_sightlines, n_pixels = tau.shape
@@ -498,7 +491,6 @@ def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', thres
     }
 
 
-# Format statistics dictionary as a nice text table.
 def format_stats_table(stats):
     """Format flux statistics as a text table."""
     lines = [
@@ -518,3 +510,189 @@ def format_stats_table(stats):
         f"Weak absorption:        {stats['weak_absorption_frac']*100:.2f}%",
     ]
     return "\n".join(lines)
+
+
+####################################
+# ADVANCED ANALYSIS USING VoigtFit #
+####################################
+
+# Compute column density distribution using VoigtFit profile fitting.
+def compute_column_density_distribution_vpfit(flux, wavelength, redshift, threshold=0.05,
+                                              continuum_window=50, min_snr=5.0,
+                                              output_dir=None):
+    try:
+        import VoigtFit
+        from astropy import units as u
+        import astropy.constants as const
+    except ImportError:
+        print("ERROR: VoigtFit not installed. Install with: pip install VoigtFit")
+        return {'error': 'VoigtFit not available'}
+
+    # Convert wavelength to velocity space (km/s) relative to Lyman-alpha
+    lambda_lya = 1215.67  # Angstroms
+    lambda_rest = lambda_lya * (1 + redshift)
+
+    # Convert wavelength to velocity (km/s)
+    c = 299792.458  # km/s
+    velocity = c * (wavelength - lambda_rest) / lambda_rest
+
+    # Convert flux to optical depth
+    tau = -np.log(flux)
+
+    column_densities = []
+    b_parameters = []
+    absorber_redshifts = []
+    errors_N = []
+    errors_b = []
+    chi_squared_values = []
+
+    # Process each sightline
+    for i in range(flux.shape[0]):
+        flux_line = flux[i, :]
+        tau_line = tau[i, :]
+
+        # Find absorption features
+        absorbers = _find_absorption_features(tau_line, velocity, threshold)
+
+        for absorber in absorbers:
+            try:
+                # Fit Voigt profile to this absorber
+                result = _fit_single_absorber(flux_line, wavelength, absorber,
+                                              redshift, continuum_window, min_snr)
+
+                if result is not None:
+                    column_densities.append(result['N_HI'])
+                    b_parameters.append(result['b'])
+                    absorber_redshifts.append(result['z_abs'])
+                    errors_N.append(result['N_err'])
+                    errors_b.append(result['b_err'])
+                    chi_squared_values.append(result['chi2'])
+
+            except Exception as e:
+                print(f"Warning: Failed to fit absorber in sightline {i}: {e}")
+                continue
+
+    # Convert to numpy arrays
+    column_densities = np.array(column_densities)
+    b_parameters = np.array(b_parameters)
+    absorber_redshifts = np.array(absorber_redshifts)
+    errors_N = np.array(errors_N)
+    errors_b = np.array(errors_b)
+    chi_squared_values = np.array(chi_squared_values)
+
+    return {
+        'N_HI': column_densities,
+        'b_params': b_parameters,
+        'redshifts': absorber_redshifts,
+        'errors_N': errors_N,
+        'errors_b': errors_b,
+        'chi_squared': chi_squared_values,
+        'n_absorbers': len(column_densities),
+        'method': 'VoigtFit'
+    }
+
+
+# Find absorption features in optical depth spectrum.
+def _find_absorption_features(tau, velocity, threshold):
+    absorbers = []
+
+    # Find contiguous regions above threshold
+    in_feature = False
+    start_idx = 0
+
+    for i in range(len(tau)):
+        if tau[i] > threshold and not in_feature:
+            # Start of feature
+            in_feature = True
+            start_idx = i
+        elif tau[i] <= threshold and in_feature:
+            # End of feature
+            end_idx = i - 1
+
+            # Check if feature is significant
+            if end_idx - start_idx >= 3:  # At least 3 pixels
+                absorbers.append({
+                    'vel_start': velocity[start_idx],
+                    'vel_end': velocity[end_idx],
+                    'tau_max': np.max(tau[start_idx:end_idx+1]),
+                    'pixel_start': start_idx,
+                    'pixel_end': end_idx
+                })
+
+            in_feature = False
+
+    # Handle feature at end
+    if in_feature and len(tau) - start_idx >= 3:
+        absorbers.append({
+            'vel_start': velocity[start_idx],
+            'vel_end': velocity[-1],
+            'tau_max': np.max(tau[start_idx:]),
+            'pixel_start': start_idx,
+            'pixel_end': len(tau) - 1
+        })
+
+    return absorbers
+
+
+# Fit a single absorber with VoigtFit.
+def _fit_single_absorber(flux, wavelength, absorber, redshift, continuum_window, min_snr):
+    try:
+        from VoigtFit import VoigtFitter
+        import astropy.units as u
+
+        # Extract region around absorber
+        pixel_start = max(0, absorber['pixel_start'] - continuum_window)
+        pixel_end = min(len(flux), absorber['pixel_end'] + continuum_window)
+
+        flux_region = flux[pixel_start:pixel_end]
+        wave_region = wavelength[pixel_start:pixel_end]
+
+        # Create VoigtFit spectrum object
+        spec = VoigtFitter(wave_region, flux_region)
+
+        # Estimate continuum (simple linear fit to edges)
+        edge_size = min(10, len(flux_region)//4)
+        left_flux = np.mean(flux_region[:edge_size])
+        right_flux = np.mean(flux_region[-edge_size:])
+        continuum = np.linspace(left_flux, right_flux, len(flux_region))
+        spec.set_continuum(continuum)
+
+        # Estimate initial parameters
+        center_vel = (absorber['vel_start'] + absorber['vel_end']) / 2
+        center_wave = 1215.67 * (1 + redshift) * (1 + center_vel/299792.458)
+
+        # Rough column density estimate from optical depth
+        tau_max = absorber['tau_max']
+        dv = np.abs(absorber['vel_end'] - absorber['vel_start'])
+        N_est = 1.13e14 * tau_max * dv  # Simplified estimate
+
+        # Rough b estimate from width
+        b_est = dv / 2.355  # FWHM to sigma conversion
+
+        # Add HI Lyman-alpha component
+        spec.add_line('HI1215', center_wave, N_est, b_est, z=redshift)
+
+        # Fit the spectrum
+        spec.fit()
+
+        # Extract results
+        if spec.lines:
+            line = spec.lines[0]  # First (and only) line
+
+            # Check fit quality
+            chi2 = spec.chi2
+            if chi2 > 100:  # Poor fit
+                return None
+
+            return {
+                'N_HI': line.N.value,
+                'b': line.b.value,
+                'z_abs': line.z,
+                'N_err': line.N.std if hasattr(line.N, 'std') else 0.1,
+                'b_err': line.b.std if hasattr(line.b, 'std') else 5.0,
+                'chi2': chi2
+            }
+
+    except Exception as e:
+        print(f"VoigtFit error: {e}")
+        return None

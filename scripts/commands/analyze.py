@@ -5,7 +5,6 @@ import h5py
 import matplotlib.pyplot as plt
 
 import scripts.config as config
-import scripts.utils as utils
 from scripts.analysis import (
     compute_flux_statistics,
     compute_effective_optical_depth,
@@ -25,6 +24,8 @@ from scripts.plotting import (
     plot_temperature_density_relation,
     plot_multi_line_comparison,
 )
+
+from scripts.analysis import compute_column_density_distribution_vpfit
 
 
 def cmd_analyze(args):
@@ -207,7 +208,7 @@ def cmd_analyze(args):
             print("Power law fit: insufficient data")
 
     elif cd_method == 'vpfit':
-        cddf_dict = utils.compute_column_density_distribution_vpfit(
+        cddf_dict = compute_column_density_distribution_vpfit(
             flux, wavelength, redshift, threshold=0.05
         )
         if 'error' not in cddf_dict:
@@ -223,15 +224,6 @@ def cmd_analyze(args):
             print("  Falling back to simple method...")
             cddf_dict = compute_column_density_distribution(
                 tau, velocity_spacing, threshold=0.5, colden=colden)
-
-    elif cd_method == 'hybrid':
-        cddf_dict = utils.compute_column_density_distribution_hybrid(
-            tau, wavelength, redshift
-        )
-        print(f"Hybrid method (detection + fitting)")
-        print(f"Identified {cddf_dict.get('n_absorbers', 0)} absorbers")
-        if 'simple_backup' in cddf_dict:
-            print(f"VPFIT refined {cddf_dict['n_absorbers']} absorbers")
 
     else:
         print(f"Unknown method '{cd_method}', using simple")
