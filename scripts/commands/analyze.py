@@ -591,7 +591,7 @@ def cmd_analyze(args):
         output_dir = get_analysis_output_dir(spectra_file)
         
         # Save results
-        created_files = save_analysis_results(results_dict, output_dir, formats=['json', 'csv'])
+        created_files = save_analysis_results(results_dict, output_dir)
         
         print(f"Exported analysis data to: {output_dir}")
         
@@ -642,7 +642,6 @@ def cmd_analyze(args):
     
     try:
         print(f"\nData exported to: {output_dir}")
-        print("- analysis_results.json")
         print("- power_spectrum.csv")
         print("- cddf.csv")
         print("- flux_stats.csv")

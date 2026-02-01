@@ -536,8 +536,8 @@ def plot_flux_stats_comparison(stats_list, labels, output_path, redshift=None, t
     setup_plot_style()
     
     # Select key statistics to plot
-    key_stats = ['mean_flux', 'median_flux', 'mean_tau', 'transmission_fraction']
-    stat_labels = ['Mean Flux', 'Median Flux', 'Mean τ', 'Trans. Frac.']
+    key_stats = ['mean_flux', 'median_flux', 'mean_tau', 'weak_absorption_frac']
+    stat_labels = ['Mean Flux', 'Median Flux', 'Mean τ', 'Weak Abs. Frac.']
     
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     axes = axes.flatten()
@@ -591,13 +591,17 @@ def plot_tau_eff_comparison(tau_eff_list, labels, output_path, redshift=None, ti
     
     # Extract values and errors
     tau_eff_vals = [tau_dict['tau_eff'] for tau_dict in tau_eff_list]
-    tau_eff_errs = [tau_dict['tau_eff_err'] for tau_dict in tau_eff_list]
+    tau_eff_errs = [tau_dict.get('tau_eff_err', 0) for tau_dict in tau_eff_list]
+    tau_eff_errs = [err if err is not None else 0 for err in tau_eff_errs]  # Handle None
     
     # Create bar chart with error bars
     bars = ax.bar(x_pos, tau_eff_vals, color=colors, alpha=0.7, 
                   edgecolor='black', linewidth=1.5)
-    ax.errorbar(x_pos, tau_eff_vals, yerr=tau_eff_errs, fmt='none', 
-                color='black', capsize=5, linewidth=2)
+    
+    # Only show error bars if at least one is non-zero
+    if any(err > 0 for err in tau_eff_errs):
+        ax.errorbar(x_pos, tau_eff_vals, yerr=tau_eff_errs, fmt='none', 
+                    color='black', capsize=5, linewidth=2)
     
     # Format
     ax.set_ylabel('τ_eff', fontsize=14)
@@ -608,8 +612,12 @@ def plot_tau_eff_comparison(tau_eff_list, labels, output_path, redshift=None, ti
     # Add value labels
     for i, (bar, val, err) in enumerate(zip(bars, tau_eff_vals, tau_eff_errs)):
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + err,
-               f'{val:.3f}±{err:.3f}', ha='center', va='bottom', fontsize=9)
+        if err > 0:
+            ax.text(bar.get_x() + bar.get_width()/2., height + err,
+                   f'{val:.3f}±{err:.3f}', ha='center', va='bottom', fontsize=9)
+        else:
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{val:.3f}', ha='center', va='bottom', fontsize=9)
     
     if title:
         ax.set_title(title, fontsize=14)

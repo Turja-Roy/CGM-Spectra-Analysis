@@ -14,13 +14,7 @@ from scripts.label_generator import (
     detect_varying_parameter,
     get_fiducial_name,
 )
-from scripts.data_export import save_analysis_results, get_analysis_output_dir
-from scripts.analysis import (
-    compute_flux_statistics,
-    compute_effective_optical_depth,
-    compute_power_spectrum,
-    compute_column_density_distribution,
-)
+from scripts.data_export import get_analysis_output_dir
 from scripts.plotting import (
     setup_plot_style,
     plot_power_spectrum_overlay,
@@ -142,8 +136,8 @@ def cmd_compare(args):
     for i, label in enumerate(labels, 1):
         print(f"  [{i}] {label}")
     
-    # Load or compute analysis data
-    print("\n[2/4] Loading analysis data...")
+    # Load analysis data from CSV files
+    print("\n[2/4] Loading analysis data from CSV files...")
     
     analysis_results = []
     flux_arrays = []
@@ -154,54 +148,29 @@ def cmd_compare(args):
         print(f"\n  [{i+1}/{len(spectra_files)}] {label}")
         print(f"  File: {filepath}")
         
-        # Try to load pre-computed analysis data
+        # Load analysis data from CSV files only
         output_dir = get_analysis_output_dir(filepath)
-        json_path = output_dir / 'analysis_results.json'
         
-        if json_path.exists():
-            print(f"  Loading pre-computed data from: {json_path}")
-            try:
-                with open(json_path, 'r') as f:
-                    results = json.load(f)
-                
-                # Verify required fields exist
-                required = ['power_spectrum', 'cddf', 'flux_stats', 'tau_eff']
-                if all(key in results for key in required):
-                    analysis_results.append(results)
-                    print("  ✓ Loaded successfully")
-                else:
-                    raise ValueError("Missing required fields")
-            except Exception as e:
-                print(f"  Warning: JSON load failed: {e}")
-                print("  Trying CSV files...")
-                try:
-                    results = load_analysis_from_csv(output_dir)
-                    required = ['power_spectrum', 'cddf', 'flux_stats', 'tau_eff']
-                    if all(key in results for key in required):
-                        analysis_results.append(results)
-                        print("  ✓ Loaded from CSV files")
-                    else:
-                        raise ValueError("Missing required CSV files")
-                except Exception as csv_err:
-                    print(f"  Warning: CSV load failed: {csv_err}")
-                    print("  Computing on-the-fly...")
-                    results = compute_analysis_on_the_fly(filepath)
-                    analysis_results.append(results)
-        else:
-            print(f"  No JSON found, trying CSV files...")
-            try:
-                results = load_analysis_from_csv(output_dir)
-                required = ['power_spectrum', 'cddf', 'flux_stats', 'tau_eff']
-                if all(key in results for key in required):
-                    analysis_results.append(results)
-                    print("  ✓ Loaded from CSV files")
-                else:
-                    raise ValueError("Missing required CSV files")
-            except Exception as e:
-                print(f"  Warning: CSV load failed: {e}")
-                print("  Computing on-the-fly...")
-                results = compute_analysis_on_the_fly(filepath)
-                analysis_results.append(results)
+        try:
+            results = load_analysis_from_csv(output_dir)
+            
+            # Verify required fields exist
+            required = ['power_spectrum', 'cddf', 'flux_stats', 'tau_eff']
+            missing = [key for key in required if key not in results]
+            
+            if missing:
+                print(f"  Error: Missing required data: {', '.join(missing)}")
+                print(f"  Please run: python analyze_spectra.py analyze {filepath}")
+                return 1
+            
+            analysis_results.append(results)
+            print("  ✓ Loaded from CSV files")
+            
+        except Exception as e:
+            print(f"  Error: Failed to load CSV files: {e}")
+            print(f"  Directory: {output_dir}")
+            print(f"  Please run: python analyze_spectra.py analyze {filepath}")
+            return 1
         
         # Load flux data for sample spectra (subsample to save memory)
         try:
@@ -238,10 +207,6 @@ def cmd_compare(args):
                     redshifts.append(z)
                 else:
                     redshifts.append(None)
-        except Exception as e:
-            print(f"  Warning: Could not load flux data: {e}")
-            flux_arrays.append(None)
-            redshifts.append(None)
         except Exception as e:
             print(f"  Warning: Could not load flux data: {e}")
             flux_arrays.append(None)
@@ -383,8 +348,10 @@ def cmd_compare(args):
 
 
 def load_analysis_from_csv(output_dir):
-    """Load analysis data from CSV files as fallback when JSON fails."""
+    """Load analysis data from CSV files."""
     import pandas as pd
+    
+    output_dir = Path(output_dir)
     
     results = {
         'metadata': {
@@ -393,144 +360,50 @@ def load_analysis_from_csv(output_dir):
         }
     }
     
-    # Load power spectrum
+    # Load power spectrum (required)
     ps_path = output_dir / 'power_spectrum.csv'
-    if ps_path.exists():
-        df = pd.read_csv(ps_path)
-        results['power_spectrum'] = {
-            'k': df['k_s_per_km'].values,
-            'P_k_mean': df['P_k_mean_km_per_s'].values,
-        }
-        if 'P_k_std' in df.columns:
-            results['power_spectrum']['P_k_std'] = df['P_k_std'].values
+    if not ps_path.exists():
+        raise FileNotFoundError(f"Missing power_spectrum.csv in {output_dir}")
     
-    # Load CDDF
+    df = pd.read_csv(ps_path)
+    results['power_spectrum'] = {
+        'k': df['k_s_per_km'].values,
+        'P_k_mean': df['P_k_mean_km_per_s'].values,
+    }
+    if 'P_k_std' in df.columns:
+        results['power_spectrum']['P_k_std'] = df['P_k_std'].values
+    if 'P_k_err' in df.columns:
+        results['power_spectrum']['P_k_err'] = df['P_k_err'].values
+    
+    # Load CDDF (required)
     cddf_path = output_dir / 'cddf.csv'
-    if cddf_path.exists():
-        df = pd.read_csv(cddf_path)
-        results['cddf'] = {
-            'log10_N_HI': df['log10_N_HI'].values,
-            'f_N_HI': df['f_N_HI'].values,
-        }
-        if 'log10_N_HI_centers' in df.columns:
-            results['cddf']['log10_N_HI_centers'] = df['log10_N_HI_centers'].values
+    if not cddf_path.exists():
+        raise FileNotFoundError(f"Missing cddf.csv in {output_dir}")
     
-    # Load flux stats
+    df = pd.read_csv(cddf_path)
+    results['cddf'] = {
+        'log10_N_HI': df['log10_N_HI'].values,
+        'f_N_HI': df['f_N_HI'].values,
+        'f_N': df['f_N_HI'].values,  # Alias for backward compatibility
+    }
+    if 'counts' in df.columns:
+        results['cddf']['counts'] = df['counts'].values
+    
+    # Load flux stats (required)
     stats_path = output_dir / 'flux_stats.csv'
-    if stats_path.exists():
-        df = pd.read_csv(stats_path)
-        results['flux_stats'] = df.iloc[0].to_dict()
+    if not stats_path.exists():
+        raise FileNotFoundError(f"Missing flux_stats.csv in {output_dir}")
     
-    # Load tau_eff (extract from flux_stats or dedicated file)
-    if 'flux_stats' in results:
-        results['tau_eff'] = {
-            'tau_eff': results['flux_stats'].get('effective_tau', None),
-            'mean_flux': results['flux_stats'].get('mean_flux', None),
-        }
+    df = pd.read_csv(stats_path)
+    # Convert from two-column format (statistic, value) to dict
+    results['flux_stats'] = dict(zip(df['statistic'], df['value']))
     
-    return results
-
-
-def compute_analysis_on_the_fly(filepath, chunk_size=2000):
-    """Compute analysis on-the-fly with chunking for large datasets."""
-    colden = None
-    
-    with h5py.File(filepath, 'r') as f:
-        # Find tau dataset (don't load yet)
-        tau_dataset = None
-        if 'tau/H/1/1215' in f:
-            tau_dataset = f['tau/H/1/1215']
-        elif 'tau' in f and isinstance(f['tau'], h5py.Dataset):
-            tau_dataset = f['tau']
-        else:
-            raise ValueError("Could not find tau data in file")
-        
-        n_sightlines = tau_dataset.shape[0]
-        n_pixels = tau_dataset.shape[1]
-        
-        print(f"    Dataset size: {n_sightlines} sightlines × {n_pixels} pixels")
-        
-        # Determine if chunking is needed
-        needs_chunking = n_sightlines > chunk_size
-        
-        if needs_chunking:
-            print(f"    Using chunked processing ({chunk_size} sightlines per chunk)")
-            
-            tau_chunks = []
-            n_chunks = (n_sightlines + chunk_size - 1) // chunk_size
-            
-            for i in range(0, n_sightlines, chunk_size):
-                end_idx = min(i + chunk_size, n_sightlines)
-                chunk_num = i // chunk_size + 1
-                
-                print(f"      Chunk {chunk_num}/{n_chunks}: sightlines {i}-{end_idx-1}")
-                
-                tau_chunk = tau_dataset[i:end_idx, :]
-                tau_chunks.append(tau_chunk)
-                del tau_chunk
-            
-            print(f"    Concatenating {n_chunks} chunks...")
-            tau = np.vstack(tau_chunks)
-            del tau_chunks
-        else:
-            print(f"    Loading all data at once")
-            tau = tau_dataset[:]
-        
-        # Load colden if available (with chunking)
-        try:
-            if 'colden/H/1' in f:
-                colden_dataset = f['colden/H/1']
-                
-                if needs_chunking:
-                    colden_chunks = []
-                    for i in range(0, n_sightlines, chunk_size):
-                        end_idx = min(i + chunk_size, n_sightlines)
-                        colden_chunk = colden_dataset[i:end_idx, :]
-                        colden_chunks.append(colden_chunk)
-                    colden = np.vstack(colden_chunks)
-                    del colden_chunks
-                else:
-                    colden = colden_dataset[:]
-        except Exception as e:
-            print(f"    Warning: Could not load column density: {e}")
-        
-        redshift = None
-        if 'Header' in f:
-            header = f['Header'].attrs
-            redshift = header.get('redshift', header.get('Redshift', None))
-    
-    print("    Computing flux from tau...")
-    flux = np.exp(-tau)
-    
-    velocity_spacing = 0.1
-    
-    print("    Computing flux statistics...")
-    stats = compute_flux_statistics(tau)
-    
-    print("    Computing tau_eff...")
-    tau_eff_dict = compute_effective_optical_depth(tau)
-    
-    print("    Computing power spectrum...")
-    power_dict = compute_power_spectrum(flux, velocity_spacing)
-    
-    print("    Computing CDDF...")
-    cddf_dict = compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=colden)
-    
-    del tau, flux
-    if colden is not None:
-        del colden
-    
-    results = {
-        'metadata': {
-            'spectra_file': filepath,
-            'redshift': redshift,
-            'computed_on_the_fly': True,
-            'chunked': needs_chunking,
-        },
-        'flux_stats': stats,
-        'tau_eff': tau_eff_dict,
-        'power_spectrum': power_dict,
-        'cddf': cddf_dict,
+    # Extract tau_eff from flux_stats (required)
+    results['tau_eff'] = {
+        'tau_eff': results['flux_stats'].get('effective_tau', None),
+        'mean_flux': results['flux_stats'].get('mean_flux', None),
+        'tau_eff_err': None,  # Not available from CSV (would need per-sightline data)
+        'tau_eff_std': None,
     }
     
     return results

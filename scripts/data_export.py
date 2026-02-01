@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime
 
 
-def save_analysis_results(results_dict, output_dir, formats=['json', 'csv']):
+def save_analysis_results(results_dict, output_dir, formats=['csv']):
     """Save comprehensive analysis results to JSON and/or CSV files."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -72,56 +72,9 @@ def save_analysis_results(results_dict, output_dir, formats=['json', 'csv']):
     return created_files
 
 
-def filter_large_arrays_for_json(results_dict, max_array_size=100):
-    """Filter large arrays from results to keep JSON files small."""
-    import copy
-    
-    filtered = copy.deepcopy(results_dict)
-    
-    exclude_fields = [
-        'tau_eff_per_sightline',
-        'flux_per_sightline',
-        'tau_array',
-        'flux_array',
-        'colden_array',
-    ]
-    
-    def filter_dict(d):
-        if not isinstance(d, dict):
-            return d
-        
-        filtered_d = {}
-        for key, value in d.items():
-            if key in exclude_fields:
-                filtered_d[key] = f"<excluded: see CSV files>"
-                continue
-            
-            if isinstance(value, dict):
-                filtered_d[key] = filter_dict(value)
-            elif isinstance(value, (np.ndarray, list)):
-                length = value.size if isinstance(value, np.ndarray) else len(value)
-                
-                if length > max_array_size:
-                    dtype_str = str(value.dtype) if isinstance(value, np.ndarray) else (type(value[0]).__name__ if len(value) > 0 else 'unknown')
-                    filtered_d[key] = {
-                        "_note": f"Array too large for JSON ({length} elements)",
-                        "length": length,
-                        "dtype": dtype_str
-                    }
-                else:
-                    filtered_d[key] = value
-            else:
-                filtered_d[key] = value
-        
-        return filtered_d
-    
-    return filter_dict(filtered)
-
-
 def save_results_json(results_dict, output_path):
-    """Save analysis results to JSON, filtering large arrays."""
-    filtered = filter_large_arrays_for_json(results_dict)
-    json_dict = convert_for_json(filtered)
+    """Save analysis results to JSON."""
+    json_dict = convert_for_json(results_dict)
     
     with open(output_path, 'w') as f:
         json.dump(json_dict, f, indent=2)
@@ -206,27 +159,39 @@ def save_line_widths_csv(lwd_dict, output_path):
 
 def save_temp_density_csv(tdens_dict, output_path):
     """Save temperature-density relation data to CSV."""
-    # Save binned data
+    # Save raw scatter data (subsampled for size)
+    log_T = tdens_dict.get('log_T', np.array([]))
+    log_rho = tdens_dict.get('log_rho', np.array([]))
+    
+    if len(log_T) == 0 or len(log_rho) == 0:
+        # No data to save
+        with open(output_path, 'w') as f:
+            f.write("# No temperature-density data available\n")
+            f.write(f"# T0 = {tdens_dict.get('T0', np.nan)} K\n")
+            f.write(f"# gamma = {tdens_dict.get('gamma', np.nan)}\n")
+            f.write(f"# gamma_err = {tdens_dict.get('gamma_err', np.nan)}\n")
+            f.write("log_density,log_temperature\n")
+        return
+    
+    # Subsample if too large (save every 10th point for scatter plots)
+    if len(log_T) > 10000:
+        stride = len(log_T) // 10000
+        log_T = log_T[::stride]
+        log_rho = log_rho[::stride]
+    
     data = {
-        'log_density': tdens_dict['log_density_bins'],
-        'log_temperature_mean': tdens_dict['log_temp_mean'],
+        'log_density': log_rho,
+        'log_temperature': log_T,
     }
-    
-    # Add standard deviation if available
-    if 'log_temp_std' in tdens_dict:
-        data['log_temperature_std'] = tdens_dict['log_temp_std']
-    
-    # Add bin counts if available
-    if 'bin_counts' in tdens_dict:
-        data['counts'] = tdens_dict['bin_counts']
     
     df = pd.DataFrame(data)
     
     # Add fit parameters as comments in CSV header
     with open(output_path, 'w') as f:
-        f.write(f"# T0 = {tdens_dict['T0']:.2f} K\n")
-        f.write(f"# gamma = {tdens_dict['gamma']:.4f}\n")
-        f.write(f"# gamma_err = {tdens_dict['gamma_err']:.4f}\n")
+        f.write(f"# T0 = {tdens_dict.get('T0', np.nan)} K\n")
+        f.write(f"# gamma = {tdens_dict.get('gamma', np.nan)}\n")
+        f.write(f"# gamma_err = {tdens_dict.get('gamma_err', np.nan)}\n")
+        f.write(f"# n_pixels = {tdens_dict.get('n_pixels', len(log_T))}\n")
         df.to_csv(f, index=False, float_format='%.6e')
 
 
