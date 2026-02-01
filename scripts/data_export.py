@@ -1,7 +1,3 @@
-"""
-Data export utilities for saving analysis results to JSON and CSV formats.
-"""
-
 import os
 import json
 import numpy as np
@@ -76,10 +72,56 @@ def save_analysis_results(results_dict, output_dir, formats=['json', 'csv']):
     return created_files
 
 
+def filter_large_arrays_for_json(results_dict, max_array_size=100):
+    """Filter large arrays from results to keep JSON files small."""
+    import copy
+    
+    filtered = copy.deepcopy(results_dict)
+    
+    exclude_fields = [
+        'tau_eff_per_sightline',
+        'flux_per_sightline',
+        'tau_array',
+        'flux_array',
+        'colden_array',
+    ]
+    
+    def filter_dict(d):
+        if not isinstance(d, dict):
+            return d
+        
+        filtered_d = {}
+        for key, value in d.items():
+            if key in exclude_fields:
+                filtered_d[key] = f"<excluded: see CSV files>"
+                continue
+            
+            if isinstance(value, dict):
+                filtered_d[key] = filter_dict(value)
+            elif isinstance(value, (np.ndarray, list)):
+                length = value.size if isinstance(value, np.ndarray) else len(value)
+                
+                if length > max_array_size:
+                    dtype_str = str(value.dtype) if isinstance(value, np.ndarray) else (type(value[0]).__name__ if len(value) > 0 else 'unknown')
+                    filtered_d[key] = {
+                        "_note": f"Array too large for JSON ({length} elements)",
+                        "length": length,
+                        "dtype": dtype_str
+                    }
+                else:
+                    filtered_d[key] = value
+            else:
+                filtered_d[key] = value
+        
+        return filtered_d
+    
+    return filter_dict(filtered)
+
+
 def save_results_json(results_dict, output_path):
-    """Save full analysis results to JSON file."""
-    # Convert numpy arrays to lists for JSON serialization
-    json_dict = convert_for_json(results_dict)
+    """Save analysis results to JSON, filtering large arrays."""
+    filtered = filter_large_arrays_for_json(results_dict)
+    json_dict = convert_for_json(filtered)
     
     with open(output_path, 'w') as f:
         json.dump(json_dict, f, indent=2)
@@ -110,17 +152,18 @@ def save_power_spectrum_csv(power_dict, output_path):
 
 def save_cddf_csv(cddf_dict, output_path):
     """Save column density distribution to CSV."""
+    log10_N_HI = cddf_dict.get('log10_N_HI', cddf_dict.get('log_bin_edges'))
+    f_N = cddf_dict.get('f_N', cddf_dict.get('f_N_HI'))
+    
     data = {
-        'log10_N_HI': cddf_dict['log10_N_HI'],
-        'f_N': cddf_dict['f_N'],
+        'log10_N_HI': log10_N_HI,
+        'f_N_HI': f_N,
         'counts': cddf_dict['counts'],
     }
     
-    # Add bin width if available
     if 'delta_log_N' in cddf_dict:
         data['delta_log_N'] = cddf_dict['delta_log_N']
     
-    # Add bin centers if different from bin edges
     if 'bin_centers' in cddf_dict:
         data['bin_center'] = cddf_dict['bin_centers']
     

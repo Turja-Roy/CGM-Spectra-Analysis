@@ -209,9 +209,12 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
         'bins': bin_edges,
         'bin_centers': bin_centers,
         'log_bin_edges': log_bin_edges,
+        'log10_N_HI': log_bin_edges,
         'delta_log_N': delta_log_N,
         'beta_fit': beta_fit,
-        'n_absorbers': len(column_densities)
+        'n_absorbers': len(column_densities),
+        'f_N': counts / delta_log_N,
+        'f_N_HI': counts / delta_log_N,
     }
 
 

@@ -1,7 +1,3 @@
-"""
-Enhanced comparison command with glob support, auto-labeling, and overlay plots.
-"""
-
 import os
 import sys
 import json
@@ -174,33 +170,63 @@ def cmd_compare(args):
                     analysis_results.append(results)
                     print("  ✓ Loaded successfully")
                 else:
-                    print(f"  Warning: Missing required fields, computing on-the-fly...")
+                    raise ValueError("Missing required fields")
+            except Exception as e:
+                print(f"  Warning: JSON load failed: {e}")
+                print("  Trying CSV files...")
+                try:
+                    results = load_analysis_from_csv(output_dir)
+                    required = ['power_spectrum', 'cddf', 'flux_stats', 'tau_eff']
+                    if all(key in results for key in required):
+                        analysis_results.append(results)
+                        print("  ✓ Loaded from CSV files")
+                    else:
+                        raise ValueError("Missing required CSV files")
+                except Exception as csv_err:
+                    print(f"  Warning: CSV load failed: {csv_err}")
+                    print("  Computing on-the-fly...")
                     results = compute_analysis_on_the_fly(filepath)
                     analysis_results.append(results)
+        else:
+            print(f"  No JSON found, trying CSV files...")
+            try:
+                results = load_analysis_from_csv(output_dir)
+                required = ['power_spectrum', 'cddf', 'flux_stats', 'tau_eff']
+                if all(key in results for key in required):
+                    analysis_results.append(results)
+                    print("  ✓ Loaded from CSV files")
+                else:
+                    raise ValueError("Missing required CSV files")
             except Exception as e:
-                print(f"  Warning: Could not load pre-computed data: {e}")
+                print(f"  Warning: CSV load failed: {e}")
                 print("  Computing on-the-fly...")
                 results = compute_analysis_on_the_fly(filepath)
                 analysis_results.append(results)
-        else:
-            print(f"  No pre-computed data found")
-            print("  Computing analysis on-the-fly...")
-            results = compute_analysis_on_the_fly(filepath)
-            analysis_results.append(results)
         
-        # Load flux data for sample spectra comparison
+        # Load flux data for sample spectra (subsample to save memory)
         try:
             with h5py.File(filepath, 'r') as f:
                 # Find tau data (try common paths)
-                tau = None
+                tau_dataset = None
                 if 'tau/H/1/1215' in f:
-                    tau = f['tau/H/1/1215'][:]
+                    tau_dataset = f['tau/H/1/1215']
                 elif 'tau' in f and isinstance(f['tau'], h5py.Dataset):
-                    tau = f['tau'][:]
+                    tau_dataset = f['tau']
                 
-                if tau is not None:
-                    flux = np.exp(-tau)
-                    flux_arrays.append(flux)
+                if tau_dataset is not None:
+                    # Subsample 5 random sightlines (consistent seed for all files)
+                    n_sightlines_total = tau_dataset.shape[0]
+                    n_sample = min(5, n_sightlines_total)
+                    
+                    np.random.seed(42)  # Consistent random selection across all files
+                    sample_indices = np.random.choice(n_sightlines_total, n_sample, replace=False)
+                    
+                    # Load only the selected sightlines (huge memory savings!)
+                    tau_subset = tau_dataset[sorted(sample_indices), :]
+                    flux_subset = np.exp(-tau_subset)
+                    flux_arrays.append(flux_subset)
+                    
+                    print(f"  Loaded {n_sample} sample sightlines (out of {n_sightlines_total})")
                 else:
                     flux_arrays.append(None)
                     print("  Warning: Could not load flux data for sample spectra")
@@ -212,6 +238,10 @@ def cmd_compare(args):
                     redshifts.append(z)
                 else:
                     redshifts.append(None)
+        except Exception as e:
+            print(f"  Warning: Could not load flux data: {e}")
+            flux_arrays.append(None)
+            redshifts.append(None)
         except Exception as e:
             print(f"  Warning: Could not load flux data: {e}")
             flux_arrays.append(None)
@@ -352,40 +382,128 @@ def cmd_compare(args):
     return 0
 
 
-def compute_analysis_on_the_fly(filepath):
-    """Compute analysis results on-the-fly if pre-computed data is not available."""
+def load_analysis_from_csv(output_dir):
+    """Load analysis data from CSV files as fallback when JSON fails."""
+    import pandas as pd
+    
+    results = {
+        'metadata': {
+            'loaded_from': 'csv',
+            'output_dir': str(output_dir)
+        }
+    }
+    
+    # Load power spectrum
+    ps_path = output_dir / 'power_spectrum.csv'
+    if ps_path.exists():
+        df = pd.read_csv(ps_path)
+        results['power_spectrum'] = {
+            'k': df['k_s_per_km'].values,
+            'P_k_mean': df['P_k_mean_km_per_s'].values,
+        }
+        if 'P_k_std' in df.columns:
+            results['power_spectrum']['P_k_std'] = df['P_k_std'].values
+    
+    # Load CDDF
+    cddf_path = output_dir / 'cddf.csv'
+    if cddf_path.exists():
+        df = pd.read_csv(cddf_path)
+        results['cddf'] = {
+            'log10_N_HI': df['log10_N_HI'].values,
+            'f_N_HI': df['f_N_HI'].values,
+        }
+        if 'log10_N_HI_centers' in df.columns:
+            results['cddf']['log10_N_HI_centers'] = df['log10_N_HI_centers'].values
+    
+    # Load flux stats
+    stats_path = output_dir / 'flux_stats.csv'
+    if stats_path.exists():
+        df = pd.read_csv(stats_path)
+        results['flux_stats'] = df.iloc[0].to_dict()
+    
+    # Load tau_eff (extract from flux_stats or dedicated file)
+    if 'flux_stats' in results:
+        results['tau_eff'] = {
+            'tau_eff': results['flux_stats'].get('effective_tau', None),
+            'mean_flux': results['flux_stats'].get('mean_flux', None),
+        }
+    
+    return results
+
+
+def compute_analysis_on_the_fly(filepath, chunk_size=2000):
+    """Compute analysis on-the-fly with chunking for large datasets."""
     colden = None
     
     with h5py.File(filepath, 'r') as f:
-        # Load tau data
-        tau = None
+        # Find tau dataset (don't load yet)
+        tau_dataset = None
         if 'tau/H/1/1215' in f:
-            tau = f['tau/H/1/1215'][:]
+            tau_dataset = f['tau/H/1/1215']
         elif 'tau' in f and isinstance(f['tau'], h5py.Dataset):
-            tau = f['tau'][:]
+            tau_dataset = f['tau']
         else:
             raise ValueError("Could not find tau data in file")
         
-        # Load column density if available
+        n_sightlines = tau_dataset.shape[0]
+        n_pixels = tau_dataset.shape[1]
+        
+        print(f"    Dataset size: {n_sightlines} sightlines × {n_pixels} pixels")
+        
+        # Determine if chunking is needed
+        needs_chunking = n_sightlines > chunk_size
+        
+        if needs_chunking:
+            print(f"    Using chunked processing ({chunk_size} sightlines per chunk)")
+            
+            tau_chunks = []
+            n_chunks = (n_sightlines + chunk_size - 1) // chunk_size
+            
+            for i in range(0, n_sightlines, chunk_size):
+                end_idx = min(i + chunk_size, n_sightlines)
+                chunk_num = i // chunk_size + 1
+                
+                print(f"      Chunk {chunk_num}/{n_chunks}: sightlines {i}-{end_idx-1}")
+                
+                tau_chunk = tau_dataset[i:end_idx, :]
+                tau_chunks.append(tau_chunk)
+                del tau_chunk
+            
+            print(f"    Concatenating {n_chunks} chunks...")
+            tau = np.vstack(tau_chunks)
+            del tau_chunks
+        else:
+            print(f"    Loading all data at once")
+            tau = tau_dataset[:]
+        
+        # Load colden if available (with chunking)
         try:
             if 'colden/H/1' in f:
-                colden = f['colden/H/1'][:]
-        except:
-            pass
+                colden_dataset = f['colden/H/1']
+                
+                if needs_chunking:
+                    colden_chunks = []
+                    for i in range(0, n_sightlines, chunk_size):
+                        end_idx = min(i + chunk_size, n_sightlines)
+                        colden_chunk = colden_dataset[i:end_idx, :]
+                        colden_chunks.append(colden_chunk)
+                    colden = np.vstack(colden_chunks)
+                    del colden_chunks
+                else:
+                    colden = colden_dataset[:]
+        except Exception as e:
+            print(f"    Warning: Could not load column density: {e}")
         
-        # Load metadata
         redshift = None
         if 'Header' in f:
             header = f['Header'].attrs
             redshift = header.get('redshift', header.get('Redshift', None))
     
-    # Compute flux
+    print("    Computing flux from tau...")
     flux = np.exp(-tau)
     
-    # Velocity spacing (assume 0.1 km/s)
     velocity_spacing = 0.1
     
-    # Compute statistics
     print("    Computing flux statistics...")
     stats = compute_flux_statistics(tau)
     
@@ -398,12 +516,16 @@ def compute_analysis_on_the_fly(filepath):
     print("    Computing CDDF...")
     cddf_dict = compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=colden)
     
-    # Prepare results
+    del tau, flux
+    if colden is not None:
+        del colden
+    
     results = {
         'metadata': {
             'spectra_file': filepath,
             'redshift': redshift,
             'computed_on_the_fly': True,
+            'chunked': needs_chunking,
         },
         'flux_stats': stats,
         'tau_eff': tau_eff_dict,
