@@ -230,6 +230,19 @@ def cmd_generate(args):
 
     output_path = spec.savefile
     
+    # Add velocity spacing information to header
+    import h5py
+    try:
+        with h5py.File(output_path, 'r+') as f:
+            if 'Header' in f:
+                header = f['Header'].attrs
+                header['vmax'] = spec.vmax
+                header['dvbin'] = spec.dvbin
+                print(f"Added velocity spacing to header: vmax={spec.vmax:.2f} km/s, dvbin={spec.dvbin:.4f} km/s/pixel")
+    except Exception as e:
+        print(f"Warning: Could not add velocity spacing to header: {e}")
+        print("(This won't affect functionality - velocity spacing can be computed from other header attributes)")
+    
     # Save sightlines in spectra HDF5
     from scripts.sightline_manager import save_sightlines_in_spectra
     metadata_sightlines = {

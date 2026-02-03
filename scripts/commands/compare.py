@@ -25,6 +25,45 @@ from scripts.plotting import (
 )
 
 
+def compute_velocity_spacing(header):
+    """
+    Compute velocity spacing (dvbin) from HDF5 header attributes.
+    
+    Tries to load dvbin directly if available (new files), otherwise
+    computes from box size, Hubble parameter, and number of bins (backward compatible).
+    
+    Parameters:
+    -----------
+    header : h5py.AttributeManager
+        HDF5 header attributes
+    
+    Returns:
+    --------
+    dvbin : float
+        Velocity spacing in km/s per pixel
+    """
+    # Try to load directly (new files)
+    if 'dvbin' in header:
+        return float(header['dvbin'])
+    
+    # Compute from other attributes (backward compatible)
+    try:
+        nbins = header['nbins']
+        box = header['box']  # ckpc/h
+        Hz = header['Hz']    # km/s/Mpc
+        hubble = header['hubble']  # h parameter
+        
+        # Compute vmax: convert box to cMpc/h, then to velocity
+        vmax = (box / 1000.0) * Hz / hubble  # km/s
+        
+        # Compute velocity spacing
+        dvbin = 2.0 * vmax / nbins
+        
+        return dvbin
+    except KeyError as e:
+        raise ValueError(f"Could not compute velocity spacing: missing header attribute {e}")
+
+
 def cmd_compare(args):
     """Compare multiple spectra files with auto-labeling and overlay plots."""
     print("=" * 70)
@@ -142,7 +181,7 @@ def cmd_compare(args):
     analysis_results = []
     flux_arrays = []
     redshifts = []
-    velocity_spacing = 0.1  # Default, will be updated from data
+    velocity_spacings = []  # Store velocity spacing for each file
     
     for i, (filepath, label) in enumerate(zip(spectra_files, labels)):
         print(f"\n  [{i+1}/{len(spectra_files)}] {label}")
@@ -200,17 +239,21 @@ def cmd_compare(args):
                     flux_arrays.append(None)
                     print("  Warning: Could not load flux data for sample spectra")
                 
+                # Load or compute velocity spacing
+                header = f['Header'].attrs
+                dvbin = compute_velocity_spacing(header)
+                velocity_spacings.append(dvbin)
+                print(f"  Velocity spacing: {dvbin:.4f} km/s")
+                
                 # Load redshift
-                if 'Header' in f:
-                    header = f['Header'].attrs
-                    z = header.get('redshift', header.get('Redshift', None))
-                    redshifts.append(z)
-                else:
-                    redshifts.append(None)
+                z = header.get('redshift', header.get('Redshift', None))
+                redshifts.append(z)
+                
         except Exception as e:
             print(f"  Warning: Could not load flux data: {e}")
             flux_arrays.append(None)
             redshifts.append(None)
+            velocity_spacings.append(None)
     
     # Use first non-None redshift
     redshift = next((z for z in redshifts if z is not None), None)
@@ -300,18 +343,63 @@ def cmd_compare(args):
     print(f"      Saved: {tau_path}")
     
     # 5. Sample spectra comparison (if data available)
-    valid_flux = [f for f in flux_arrays if f is not None]
+    # Filter flux arrays and corresponding labels/velocity spacings
+    valid_indices = [i for i, f in enumerate(flux_arrays) if f is not None and velocity_spacings[i] is not None]
+    valid_flux = [flux_arrays[i] for i in valid_indices]
+    valid_labels = [labels[i] for i in valid_indices]
+    valid_velocity_spacings = [velocity_spacings[i] for i in valid_indices]
+    
     if len(valid_flux) >= 2:
         print("  [e] Sample spectra comparison...")
         
-        # Create velocity array
-        n_pixels = valid_flux[0].shape[1]
-        velocity = np.arange(n_pixels) * velocity_spacing
+        # Check if all files have the same pixel count
+        pixel_counts = [f.shape[1] for f in valid_flux]
+        unique_counts = set(pixel_counts)
         
-        spectra_path = output_dir / 'sample_spectra_comparison.png'
-        plot_sample_spectra_comparison(valid_flux, labels, velocity, spectra_path, 
-                                        n_samples=5, redshift=redshift)
-        print(f"      Saved: {spectra_path}")
+        if len(unique_counts) > 1:
+            print(f"      Warning: Files have different pixel counts: {unique_counts}")
+            print(f"      Will interpolate all spectra to common velocity grid")
+            
+            # Find the file with the most pixels (highest resolution)
+            max_pixels_idx = np.argmax(pixel_counts)
+            max_pixels = pixel_counts[max_pixels_idx]
+            ref_dvbin = valid_velocity_spacings[max_pixels_idx]
+            
+            # Create reference velocity array
+            velocity_ref = np.arange(max_pixels) * ref_dvbin
+            
+            # Interpolate all flux arrays to reference grid
+            flux_interp = []
+            for j, flux in enumerate(valid_flux):
+                n_pix = flux.shape[1]
+                dvbin = valid_velocity_spacings[j]
+                velocity_orig = np.arange(n_pix) * dvbin
+                
+                # Interpolate each sightline
+                flux_interp_j = np.zeros((flux.shape[0], max_pixels))
+                for k in range(flux.shape[0]):
+                    flux_interp_j[k, :] = np.interp(velocity_ref, velocity_orig, flux[k, :])
+                
+                flux_interp.append(flux_interp_j)
+            
+            # Use interpolated data
+            spectra_path = output_dir / 'sample_spectra_comparison.png'
+            plot_sample_spectra_comparison(flux_interp, valid_labels, velocity_ref, spectra_path, 
+                                            n_samples=5, redshift=redshift)
+            print(f"      Saved: {spectra_path}")
+        else:
+            # All files have same pixel count - no interpolation needed
+            print(f"      All files have matching pixel count: {pixel_counts[0]}")
+            
+            # Use velocity spacing from first valid file
+            dvbin = valid_velocity_spacings[0]
+            n_pixels = valid_flux[0].shape[1]
+            velocity = np.arange(n_pixels) * dvbin
+            
+            spectra_path = output_dir / 'sample_spectra_comparison.png'
+            plot_sample_spectra_comparison(valid_flux, valid_labels, velocity, spectra_path, 
+                                            n_samples=5, redshift=redshift)
+            print(f"      Saved: {spectra_path}")
     else:
         print("  [e] Sample spectra comparison skipped (insufficient flux data)")
     

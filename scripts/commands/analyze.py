@@ -174,9 +174,34 @@ def cmd_analyze(args):
     print(f"Mean transmitted flux <F> = {tau_eff_dict['mean_flux']:.4f}")
 
     # Generate velocity and wavelength arrays
-    # Velocity spacing from resolution (assume 0.1 km/s per pixel if not specified)
+    # Load or compute velocity spacing from header
     n_sightlines, n_pixels = tau.shape
-    velocity_spacing = 0.1  # km/s, assuming default resolution
+    
+    try:
+        # Try to load dvbin directly (new files)
+        if 'dvbin' in f['Header'].attrs:
+            velocity_spacing = float(f['Header'].attrs['dvbin'])
+            print(f"Loaded velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
+        else:
+            # Compute from header attributes (backward compatible)
+            header = f['Header'].attrs
+            nbins = header['nbins']
+            box = header['box']  # ckpc/h
+            Hz = header['Hz']    # km/s/Mpc
+            hubble = header['hubble']  # h parameter
+            
+            # Compute vmax: convert box to cMpc/h, then to velocity
+            vmax = (box / 1000.0) * Hz / hubble  # km/s
+            
+            # Compute velocity spacing
+            velocity_spacing = 2.0 * vmax / nbins
+            print(f"Computed velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
+            print(f"  (vmax={vmax:.2f} km/s, nbins={nbins})")
+    except Exception as e:
+        print(f"Warning: Could not load/compute velocity spacing: {e}")
+        print(f"Falling back to default: 0.1 km/s/pixel (may be inaccurate!)")
+        velocity_spacing = 0.1  # km/s, fallback
+    
     velocity = np.arange(n_pixels) * velocity_spacing
 
     # Create wavelength array for VPFIT (centered on Lyman-alpha at given redshift)
