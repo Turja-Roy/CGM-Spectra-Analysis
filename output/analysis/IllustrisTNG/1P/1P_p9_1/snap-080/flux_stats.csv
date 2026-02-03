@@ -1,0 +1,12 @@
+statistic,value
+mean_flux,0.9556315953273701
+median_flux,0.9964517982782484
+std_flux,0.13261748116260272
+min_flux,0.0
+max_flux,1.0
+mean_tau,213.79799604205363
+median_tau,0.003554511519525987
+effective_tau,0.04538280073741219
+deep_absorption_frac,0.0070092596694873955
+moderate_absorption_frac,0.016578676177395772
+weak_absorption_frac,0.9764120641531169
