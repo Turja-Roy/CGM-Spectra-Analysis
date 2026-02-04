@@ -179,6 +179,12 @@ def plot_flux_power_spectrum(power_dict, redshift, output_path, title=None):
 
 
 def plot_column_density_distribution(cddf_dict, redshift, output_path, title=None):
+    """
+    Plot the column density distribution function (CDDF).
+    
+    The CDDF shows f(N) = dN/dlog10(N_HI) in units of [Mpc^-1] (comoving).
+    This is properly normalized by the number of sightlines and absorption path length.
+    """
     fig, ax = plt.subplots(figsize=(10, 7))
 
     bins = cddf_dict['bins']
@@ -186,16 +192,9 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
     bin_centers = cddf_dict['bin_centers']
     beta = cddf_dict['beta_fit']
 
-    # Normalize to get f(N_HI) in units of dN/dlog10(N)
-    # Use log-space bin widths for proper normalization
-    if 'delta_log_N' in cddf_dict:
-        delta_log_N = cddf_dict['delta_log_N']
-    else:
-        # Fallback for backward compatibility
-        log_bin_edges = np.log10(bins)
-        delta_log_N = np.diff(log_bin_edges)
-    
-    f_N = counts / delta_log_N
+    # Use the properly normalized f(N) from the cddf_dict
+    # f(N) is now in units of [Mpc^-1]
+    f_N = cddf_dict['f_N']
 
     # Plot
     mask = f_N > 0
@@ -217,8 +216,18 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
 
     # Formatting
     ax.set_xlabel(r'Column Density $N_{\rm HI}$ [cm$^{-2}$]', fontsize=14)
-    ax.set_ylabel(r'$f(N_{\rm HI})$ [dN/d log$_{10}$ N]', fontsize=14)
+    ax.set_ylabel(r'$f(N_{\rm HI})$ [Mpc$^{-1}$]', fontsize=14)
     ax.set_xlim(1e12, 1e22)
+    
+    # Set sensible y-axis limits for normalized CDDF
+    # Typical range: 10^-3 to 10^3 Mpc^-1
+    if np.any(f_N > 0):
+        y_min = max(1e-5, np.min(f_N[f_N > 0]) / 10)
+        y_max = min(1e4, np.max(f_N[f_N > 0]) * 10)
+        ax.set_ylim(y_min, y_max)
+    else:
+        ax.set_ylim(1e-3, 1e3)
+    
     ax.grid(True, alpha=0.3, which='both')
     ax.legend(fontsize=12)
 
@@ -226,8 +235,11 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
         title = f'Column Density Distribution (z={redshift:.2f})'
     ax.set_title(title, fontsize=15, fontweight='bold')
 
-    # Add info box
+    # Add info box with metadata
     info_text = f"N_absorbers = {cddf_dict['n_absorbers']}\n"
+    info_text += f"N_sightlines = {cddf_dict.get('n_sightlines', 'N/A')}\n"
+    if 'dX' in cddf_dict and cddf_dict['dX'] > 0:
+        info_text += f"dX = {cddf_dict['dX']:.1f} Mpc\n"
     if not np.isnan(beta):
         info_text += f"β = {beta:.2f}"
     ax.text(0.05, 0.95, info_text, transform=ax.transAxes,
@@ -489,7 +501,11 @@ def plot_power_spectrum_overlay(power_dicts, labels, output_path, redshift=None,
 
 
 def plot_cddf_overlay(cddf_dicts, labels, output_path, redshift=None, title=None):
-    """Plot column density distribution functions overlaid."""
+    """
+    Plot column density distribution functions overlaid for comparison.
+    
+    Uses properly normalized f(N) in units of [Mpc^-1].
+    """
     import matplotlib.pyplot as plt
     import numpy as np
     
@@ -512,8 +528,8 @@ def plot_cddf_overlay(cddf_dicts, labels, output_path, redshift=None, title=None
                 linewidth=2, alpha=0.8, marker='o', markersize=4)
     
     # Format axis
-    ax.set_xlabel('log₁₀(N_HI [cm⁻²])', fontsize=12)
-    ax.set_ylabel('f(N_HI) [cm²]', fontsize=12)
+    ax.set_xlabel(r'log$_{10}$(N$_{\rm HI}$ [cm$^{-2}$])', fontsize=12)
+    ax.set_ylabel(r'$f(N_{\rm HI})$ [Mpc$^{-1}$]', fontsize=12)
     ax.set_yscale('log')
     ax.grid(True, alpha=0.3, which='both')
     ax.legend(fontsize=10, loc='best', framealpha=0.9)

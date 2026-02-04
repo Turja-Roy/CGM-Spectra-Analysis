@@ -1,6 +1,35 @@
 import numpy as np
 import os
 from pathlib import Path
+from astropy.cosmology import FlatLambdaCDM
+
+
+#######################
+# COSMOLOGY UTILITIES #
+#######################
+
+def get_cosmology(omega_m=0.3089, omega_lambda=0.6911, h=0.6774):
+    return FlatLambdaCDM(H0=100*h, Om0=omega_m)
+
+
+def compute_absorption_path_length(redshift, box_size_ckpc_h, hubble=0.6774, 
+                                   omega_m=0.3089, use_cosmology=True):
+    """
+    Notes:
+
+    For a periodic box, the absorption path length is simply:
+        dX = box_size / h  [comoving Mpc]
+    
+    The proper distance would be dX / (1+z), but for CDDF we use comoving.
+    """
+    if use_cosmology:
+        # Convert ckpc/h to Mpc (comoving)
+        dX = box_size_ckpc_h / hubble / 1000.0  # Mpc
+    else:
+        # Simple conversion
+        dX = box_size_ckpc_h / hubble / 1000.0  # Mpc
+    
+    return dX
 
 
 #############################
@@ -108,10 +137,23 @@ def get_snapshot_number(filepath):
     return None
 
 
-def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
+def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=None,
+                                       redshift=None, box_size_ckpc_h=None, hubble=0.6774,
+                                       omega_m=0.3089):
     """
-    Compute column density distribution f(N_HI).
-    Uses fake_spectra's pre-computed colden if provided, otherwise estimates from tau.
+    Compute column density distribution f(N_HI) with proper cosmological normalization.
+
+    Notes:
+
+    The differential CDDF is defined as:
+        f(N) = dN/dlog10(N_HI) per unit absorption path length
+        
+    Units: [Mpc^-1] in comoving coordinates
+    
+    Normalization:
+        f(N) = counts / (n_sightlines * delta_log_N * dX)
+        
+    where dX is the comoving absorption path length (box_size in Mpc).
     """
     # Corrected constant: 8.51e11 cm^-2 / (km/s), empirically calibrated
     TAU_TO_COLDEN_CONSTANT = 8.51e11
@@ -159,6 +201,17 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
                 column_densities.append(N_HI)
 
     column_densities = np.array(column_densities)
+    n_sightlines = tau.shape[0]
+    
+    # Compute absorption path length for normalization
+    if redshift is not None and box_size_ckpc_h is not None:
+        dX = compute_absorption_path_length(redshift, box_size_ckpc_h, hubble, omega_m)
+    else:
+        # Fallback: no normalization (for backward compatibility)
+        dX = 1.0
+        if redshift is not None or box_size_ckpc_h is not None:
+            print("Warning: Missing redshift or box_size for CDDF normalization. "
+                  "Setting dX=1.0 (unnormalized)")
 
     # Create histogram in log space
     if len(column_densities) > 0:
@@ -174,14 +227,17 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
         delta_log_N = np.diff(log_bin_edges)  # Constant for logspace bins
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         log_bin_centers = np.log10(bin_centers)
+        
+        # Compute properly normalized f(N) in units of [Mpc^-1]
+        # f(N) = dN/dlog10(N) per unit comoving path length
+        f_N = counts / (n_sightlines * delta_log_N * dX)
 
         # Fit power law in range 13 < log(N) < 17 (typical Lyman-alpha forest)
         fit_mask = (log_bin_centers > 13.0) & (log_bin_centers < 17.0)
 
         if np.sum(fit_mask) > 5 and np.sum(counts[fit_mask]) > 0:
             # Fit f(N) = A * N^-beta using properly normalized f(N)
-            # f(N) in units of dN/dlog10(N)
-            f_N_fit = counts[fit_mask] / delta_log_N[fit_mask]
+            f_N_fit = f_N[fit_mask]
             log_f_fit = np.log10(f_N_fit + 1e-10)  # Avoid log(0)
             log_N_fit = log_bin_centers[fit_mask]
 
@@ -201,6 +257,8 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
         log_bin_edges = np.log10(bin_edges)
         delta_log_N = np.diff(log_bin_edges)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        log_bin_centers = np.log10(bin_centers)
+        f_N = np.zeros(len(counts))
         beta_fit = np.nan
 
     return {
@@ -213,8 +271,11 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
         'delta_log_N': delta_log_N,
         'beta_fit': beta_fit,
         'n_absorbers': len(column_densities),
-        'f_N': counts / delta_log_N,
-        'f_N_HI': counts / delta_log_N,
+        'n_sightlines': n_sightlines,
+        'f_N': f_N,
+        'f_N_HI': f_N,  # Backward compatibility
+        'dX': dX,
+        'redshift': redshift if redshift is not None else np.nan,
     }
 
 

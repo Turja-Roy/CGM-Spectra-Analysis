@@ -133,10 +133,19 @@ def cmd_analyze(args):
 
         # Load metadata if available
         redshift = None
+        box_size_ckpc_h = None
+        hubble = 0.6774  # Default for TNG/SIMBA
+        omega_m = 0.3089  # Default for TNG/SIMBA
+        
         if 'Header' in f:
             header = f['Header'].attrs
             # Try both 'redshift' and 'Redshift'
             redshift = header.get('redshift', header.get('Redshift', None))
+            # Load box size (ckpc/h)
+            box_size_ckpc_h = header.get('box', header.get('BoxSize', None))
+            # Load cosmology parameters if available
+            hubble = header.get('hubble', header.get('HubbleParam', 0.6774))
+            omega_m = header.get('omegam', header.get('Omega0', 0.3089))
 
     n_sightlines, n_pixels = tau.shape
     
@@ -224,9 +233,13 @@ def cmd_analyze(args):
 
     if cd_method == 'simple':
         cddf_dict = compute_column_density_distribution(
-            tau, velocity_spacing, threshold=0.5, colden=colden)
+            tau, velocity_spacing, threshold=0.5, colden=colden,
+            redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
+            hubble=hubble, omega_m=omega_m)
         print(f"Simple pixel optical depth method")
         print(f"Identified {cddf_dict['n_absorbers']} absorbers")
+        if redshift and box_size_ckpc_h:
+            print(f"Absorption path length: dX = {cddf_dict['dX']:.2f} Mpc (comoving)")
         if not np.isnan(cddf_dict['beta_fit']):
             print(f"Power law index β = {cddf_dict['beta_fit']:.2f}")
         else:
@@ -248,12 +261,16 @@ def cmd_analyze(args):
             print(f"  Error: {cddf_dict['error']}")
             print("  Falling back to simple method...")
             cddf_dict = compute_column_density_distribution(
-                tau, velocity_spacing, threshold=0.5, colden=colden)
+                tau, velocity_spacing, threshold=0.5, colden=colden,
+                redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
+                hubble=hubble, omega_m=omega_m)
 
     else:
         print(f"Unknown method '{cd_method}', using simple")
         cddf_dict = compute_column_density_distribution(
-            tau, velocity_spacing, threshold=0.5, colden=colden)
+            tau, velocity_spacing, threshold=0.5, colden=colden,
+            redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
+            hubble=hubble, omega_m=omega_m)
 
     # [4b/8] Line width distribution (b-parameter analysis)
     print("\n[4b/8] Computing line width distribution b(N_HI)...")

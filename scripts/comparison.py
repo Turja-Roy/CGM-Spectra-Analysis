@@ -31,11 +31,19 @@ def load_spectra_results(spectra_file, velocity_spacing=0.1):
     
     try:
         with h5py.File(spectra_file, 'r') as f:
-            # Get redshift
+            # Get metadata
             redshift = None
+            box_size_ckpc_h = None
+            hubble = 0.6774
+            omega_m = 0.3089
+            
             if 'Header' in f:
                 header = f['Header'].attrs
                 redshift = header.get('redshift', header.get('Redshift', None))
+                box_size_ckpc_h = header.get('box', header.get('BoxSize', None))
+                hubble = header.get('hubble', header.get('HubbleParam', 0.6774))
+                omega_m = header.get('omegam', header.get('Omega0', 0.3089))
+                
             results['redshift'] = float(redshift) if redshift is not None else None
             
             # Auto-detect tau data (try HI Lya first)
@@ -58,11 +66,14 @@ def load_spectra_results(spectra_file, velocity_spacing=0.1):
             results['n_sightlines'] = n_sightlines
             results['n_pixels'] = n_pixels
             
-            # Compute all analyses
+            # Compute all analyses with proper normalization
             results['flux_stats'] = compute_flux_statistics(tau)
             results['tau_eff'] = compute_effective_optical_depth(tau)
             results['power_spectrum'] = compute_power_spectrum(flux, velocity_spacing)
-            results['cddf'] = compute_column_density_distribution(tau, velocity_spacing)
+            results['cddf'] = compute_column_density_distribution(
+                tau, velocity_spacing, threshold=0.5, colden=None,
+                redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
+                hubble=hubble, omega_m=omega_m)
             
             # Try line width analysis
             try:

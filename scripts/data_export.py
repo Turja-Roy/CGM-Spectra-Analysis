@@ -104,7 +104,7 @@ def save_power_spectrum_csv(power_dict, output_path):
 
 
 def save_cddf_csv(cddf_dict, output_path):
-    """Save column density distribution to CSV."""
+    """Save column density distribution to CSV with proper normalization metadata."""
     log10_N_HI = cddf_dict.get('log10_N_HI', cddf_dict.get('log_bin_edges'))
     f_N = cddf_dict.get('f_N', cddf_dict.get('f_N_HI'))
     
@@ -121,7 +121,25 @@ def save_cddf_csv(cddf_dict, output_path):
         data['bin_center'] = cddf_dict['bin_centers']
     
     df = pd.DataFrame(data)
-    df.to_csv(output_path, index=False, float_format='%.6e')
+    
+    # Write with metadata comment at the top
+    with open(output_path, 'w') as f:
+        # Write metadata as comment
+        if 'n_sightlines' in cddf_dict:
+            f.write(f"# n_sightlines = {cddf_dict['n_sightlines']}\n")
+        if 'dX' in cddf_dict:
+            f.write(f"# dX = {cddf_dict['dX']:.6f} Mpc (comoving)\n")
+        if 'redshift' in cddf_dict:
+            f.write(f"# redshift = {cddf_dict['redshift']:.6f}\n")
+        if 'n_absorbers' in cddf_dict:
+            f.write(f"# n_absorbers = {cddf_dict['n_absorbers']}\n")
+        if 'beta_fit' in cddf_dict and not np.isnan(cddf_dict['beta_fit']):
+            f.write(f"# beta_fit = {cddf_dict['beta_fit']:.6f}\n")
+        f.write("# f_N_HI units: [Mpc^-1] (comoving)\n")
+        f.write("#\n")
+        
+        # Write the data
+        df.to_csv(f, index=False, float_format='%.6e')
 
 
 def save_flux_stats_csv(stats_dict, output_path):
