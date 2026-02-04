@@ -25,6 +25,87 @@ from scripts.plotting import (
 )
 
 
+def parse_sightline_indices(sightlines_str):
+    """
+    Parse comma-separated sightline indices string into a list of integers.
+    
+    Parameters:
+    -----------
+    sightlines_str : str or None
+        Comma-separated string of sightline indices (e.g., "0,5,10,25,50")
+    
+    Returns:
+    --------
+    indices : list of int or None
+        List of sightline indices, or None if input is None
+    
+    Raises:
+    -------
+    ValueError : if parsing fails or indices are invalid
+    """
+    if sightlines_str is None:
+        return None
+    
+    try:
+        indices = [int(idx.strip()) for idx in sightlines_str.split(',')]
+        
+        # Validate: no negative indices
+        if any(idx < 0 for idx in indices):
+            raise ValueError("Sightline indices must be non-negative")
+        
+        # Validate: no duplicates (warn but allow)
+        if len(indices) != len(set(indices)):
+            print("Warning: Duplicate sightline indices detected, using unique values")
+            indices = sorted(list(set(indices)))
+        
+        return indices
+    
+    except ValueError as e:
+        raise ValueError(f"Invalid sightline indices format '{sightlines_str}': {e}")
+
+
+def select_sightlines(n_total, user_indices=None, n_default=5, seed=42):
+    """
+    Select sightline indices for analysis.
+    
+    Parameters:
+    -----------
+    n_total : int
+        Total number of sightlines available in the file
+    user_indices : list of int or None
+        User-specified sightline indices (takes precedence)
+    n_default : int
+        Number of sightlines to randomly sample if user_indices is None
+    seed : int
+        Random seed for reproducible sampling
+    
+    Returns:
+    --------
+    indices : ndarray
+        Selected sightline indices (sorted)
+    
+    Raises:
+    -------
+    ValueError : if user-specified indices are out of bounds
+    """
+    if user_indices is not None:
+        # User specified exact indices
+        invalid = [idx for idx in user_indices if idx >= n_total]
+        if invalid:
+            raise ValueError(
+                f"Sightline indices out of bounds: {invalid}. "
+                f"File only has {n_total} sightlines (indices 0-{n_total-1})"
+            )
+        return np.array(sorted(user_indices))
+    
+    else:
+        # Default: random sampling
+        n_sample = min(n_default, n_total)
+        np.random.seed(seed)
+        indices = np.random.choice(n_total, n_sample, replace=False)
+        return np.sort(indices)
+
+
 def compute_velocity_spacing(header):
     """
     Compute velocity spacing (dvbin) from HDF5 header attributes.
@@ -69,6 +150,15 @@ def cmd_compare(args):
     print("=" * 70)
     print("SIMULATION COMPARISON (ENHANCED)")
     print("=" * 70)
+    
+    # Parse sightline indices if provided
+    try:
+        user_sightlines = parse_sightline_indices(getattr(args, 'sightlines', None))
+        if user_sightlines is not None:
+            print(f"\nUser-specified sightlines: {user_sightlines}")
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
     
     # Expand file patterns (glob)
     spectra_files = []
@@ -222,19 +312,30 @@ def cmd_compare(args):
                     tau_dataset = f['tau']
                 
                 if tau_dataset is not None:
-                    # Subsample 5 random sightlines (consistent seed for all files)
+                    # Select sightlines: user-specified or random sampling
                     n_sightlines_total = tau_dataset.shape[0]
-                    n_sample = min(5, n_sightlines_total)
                     
-                    np.random.seed(42)  # Consistent random selection across all files
-                    sample_indices = np.random.choice(n_sightlines_total, n_sample, replace=False)
+                    try:
+                        sample_indices = select_sightlines(
+                            n_sightlines_total, 
+                            user_indices=user_sightlines,
+                            n_default=5,
+                            seed=42
+                        )
+                    except ValueError as e:
+                        print(f"  Error: {e}")
+                        print(f"  File: {filepath}")
+                        return 1
                     
                     # Load only the selected sightlines (huge memory savings!)
-                    tau_subset = tau_dataset[sorted(sample_indices), :]
+                    tau_subset = tau_dataset[sample_indices, :]
                     flux_subset = np.exp(-tau_subset)
                     flux_arrays.append(flux_subset)
                     
-                    print(f"  Loaded {n_sample} sample sightlines (out of {n_sightlines_total})")
+                    if user_sightlines is not None:
+                        print(f"  Loaded {len(sample_indices)} specified sightlines: {list(sample_indices)}")
+                    else:
+                        print(f"  Loaded {len(sample_indices)} random sightlines (out of {n_sightlines_total})")
                 else:
                     flux_arrays.append(None)
                     print("  Warning: Could not load flux data for sample spectra")

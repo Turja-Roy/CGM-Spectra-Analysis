@@ -56,6 +56,11 @@ def cmd_evolve(args):
     print("=" * 70)
     print("REDSHIFT EVOLUTION TRACKING")
     print("=" * 70)
+    
+    # Note: Sightline selection for evolve command
+    if hasattr(args, 'sightlines') and args.sightlines:
+        print(f"Note: --sightlines option specified, but evolve command uses CSV data")
+        print(f"      Sightline selection only affects sample spectra plots (if any)")
 
     labels = None
     if args.labels:
@@ -92,6 +97,11 @@ def cmd_diagnose(args):
     print("=" * 70)
     print("DIAGNOSTIC ANALYSIS")
     print("=" * 70)
+    
+    # Note: Sightline selection for diagnose command
+    if hasattr(args, 'sightlines') and args.sightlines:
+        print(f"Note: --sightlines option specified: {args.sightlines}")
+        print(f"      This will be used for sample spectra if diagnostic plots are generated")
     
     output_dir = Path(args.output_dir) if args.output_dir else config.PLOTS_DIR / 'diagnostics'
     output_dir.mkdir(parents=True, exist_ok=True)

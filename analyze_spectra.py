@@ -134,6 +134,9 @@ Documentation:
                                 help='Fiducial simulation name or pattern (for ratio plots)')
     parser_compare.add_argument('--name', type=str, default=None,
                                 help='Comparison name for output directory (default: auto-generated)')
+    parser_compare.add_argument('--sightlines', type=str, default=None,
+                                help='Specific sightline indices to compare (comma-separated, e.g., "0,5,10,25,50"). '
+                                     'Default: randomly sample 5 sightlines with seed=42')
     parser_compare.set_defaults(func=cmd_compare)
 
     parser_evolve = subparsers.add_parser('evolve',
@@ -146,6 +149,9 @@ Documentation:
                                help='Output directory or file path (default: plots/comparisons/)')
     parser_evolve.add_argument('--mode', type=str, default='quick', choices=['quick', 'detailed', 'full'],
                                help='Analysis mode: quick (basic), detailed (enhanced plots), full (all analyses)')
+    parser_evolve.add_argument('--sightlines', type=str, default=None,
+                               help='Specific sightline indices to track (comma-separated, e.g., "0,5,10,25,50"). '
+                                    'Default: randomly sample 5 sightlines with seed=42')
     parser_evolve.set_defaults(func=cmd_evolve)
 
     parser_pipeline = subparsers.add_parser('pipeline',
@@ -195,6 +201,9 @@ Documentation:
                                 help='Extract and plot spectral features')
     parser_diagnose.add_argument('--distribution', action='store_true',
                                 help='Detailed flux distribution analysis')
+    parser_diagnose.add_argument('--sightlines', type=str, default=None,
+                                help='Specific sightline indices to diagnose (comma-separated, e.g., "0,5,10"). '
+                                     'Default: randomly sample 5 sightlines with seed=42')
     parser_diagnose.set_defaults(func=cmd_diagnose)
 
     parser_cgm = subparsers.add_parser(
