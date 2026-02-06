@@ -402,9 +402,10 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
                 # End of feature
                 in_feature = False
                 
-                # Compute column density
+                # Compute column density (use peak, not sum)
+                # The colden array contains column density per pixel in cm^-2
                 if colden_line is not None:
-                    N_HI = np.sum(colden_line[feature_start:j])
+                    N_HI = np.max(colden_line[feature_start:j])
                 else:
                     feature_tau = tau_line[feature_start:j]
                     N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
@@ -415,7 +416,7 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
         # Handle case where feature extends to edge
         if in_feature:
             if colden_line is not None:
-                N_HI = np.sum(colden_line[feature_start:])
+                N_HI = np.max(colden_line[feature_start:])
             else:
                 feature_tau = tau_line[feature_start:]
                 N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
@@ -567,9 +568,9 @@ def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden
 
                 tau_0_fit, b_fit, v_center_fit = popt
 
-                # Estimate column density
+                # Estimate column density (use peak, not sum)
                 if colden_line is not None:
-                    N_HI = np.sum(colden_line[left:right+1])
+                    N_HI = np.max(colden_line[left:right+1])
                 else:
                     N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
 
@@ -722,9 +723,9 @@ def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', thres
                 # End of feature
                 in_feature = False
                 
-                # Estimate column density
+                # Estimate column density (use peak, not sum)
                 if colden_line is not None:
-                    N_ion = np.sum(colden_line[feature_start:j])
+                    N_ion = np.max(colden_line[feature_start:j])
                 else:
                     feature_tau = tau_line[feature_start:j]
                     N_ion = 1e13 * np.sum(feature_tau) * velocity_spacing
@@ -733,7 +734,7 @@ def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', thres
         # Handle case where feature extends to edge
         if in_feature:
             if colden_line is not None:
-                N_ion = np.sum(colden_line[feature_start:])
+                N_ion = np.max(colden_line[feature_start:])
             else:
                 feature_tau = tau_line[feature_start:]
                 N_ion = 1e13 * np.sum(feature_tau) * velocity_spacing
