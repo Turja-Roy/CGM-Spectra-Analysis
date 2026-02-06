@@ -235,8 +235,9 @@ def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, co
         # f(N) = dN/dlog10(N) per unit comoving path length
         f_N = counts / (n_sightlines * delta_log_N * dX)
 
-        # Fit power law in range 13 < log(N) < 17 (typical Lyman-alpha forest)
-        fit_mask = (log_bin_centers > 13.0) & (log_bin_centers < 17.0)
+        # Fit power law in range 12 < log(N) < 14.5 (typical Lyman-alpha forest)
+        # Adjusted range to focus on well-populated bins with MAX colden method
+        fit_mask = (log_bin_centers > 12.0) & (log_bin_centers < 14.5)
 
         if np.sum(fit_mask) > 5 and np.sum(counts[fit_mask]) > 0:
             # Fit f(N) = A * N^-beta using properly normalized f(N)
