@@ -554,7 +554,7 @@ def load_analysis_from_csv(output_dir):
     if not ps_path.exists():
         raise FileNotFoundError(f"Missing power_spectrum.csv in {output_dir}")
     
-    df = pd.read_csv(ps_path)
+    df = pd.read_csv(ps_path, sep=',', engine='python')
     results['power_spectrum'] = {
         'k': df['k_s_per_km'].values,
         'P_k_mean': df['P_k_mean_km_per_s'].values,
@@ -569,7 +569,7 @@ def load_analysis_from_csv(output_dir):
     if not cddf_path.exists():
         raise FileNotFoundError(f"Missing cddf.csv in {output_dir}")
     
-    df = pd.read_csv(cddf_path)
+    df = pd.read_csv(cddf_path, sep=',', engine='python')
     results['cddf'] = {
         'log10_N_HI': df['log10_N_HI'].values,
         'f_N_HI': df['f_N_HI'].values,
@@ -583,7 +583,7 @@ def load_analysis_from_csv(output_dir):
     if not stats_path.exists():
         raise FileNotFoundError(f"Missing flux_stats.csv in {output_dir}")
     
-    df = pd.read_csv(stats_path)
+    df = pd.read_csv(stats_path, sep=',', engine='python')
     # Convert from two-column format (statistic, value) to dict
     results['flux_stats'] = dict(zip(df['statistic'], df['value']))
     
