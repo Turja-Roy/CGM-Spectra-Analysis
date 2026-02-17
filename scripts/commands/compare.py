@@ -569,7 +569,7 @@ def load_analysis_from_csv(output_dir):
     if not cddf_path.exists():
         raise FileNotFoundError(f"Missing cddf.csv in {output_dir}")
     
-    df = pd.read_csv(cddf_path, sep=',', engine='python')
+    df = pd.read_csv(cddf_path, sep=',', engine='python', comment='#')
     results['cddf'] = {
         'log10_N_HI': df['log10_N_HI'].values,
         'f_N_HI': df['f_N_HI'].values,
