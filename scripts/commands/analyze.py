@@ -3,6 +3,7 @@ import re
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import scripts.config as config
 from scripts.analysis import (
@@ -31,6 +32,7 @@ from scripts.analysis import compute_column_density_distribution_vpfit
 def cmd_analyze(args):
     spectra_file = args.spectra_file
     max_sightlines = args.max_sightlines if hasattr(args, 'max_sightlines') else None
+    num_workers = args.workers if hasattr(args, 'workers') else 1
 
     if not os.path.exists(spectra_file):
         print(f"Error: File not found: {spectra_file}")
@@ -40,6 +42,7 @@ def cmd_analyze(args):
     print("ANALYZING LYMAN-ALPHA SPECTRA")
     print("=" * 70)
     print(f"Input file: {spectra_file}")
+    print(f"Workers: {num_workers}")
 
     # Load spectra data
     print("\n[1/5] Loading spectra data...")
@@ -219,78 +222,140 @@ def cmd_analyze(args):
     wavelength = lambda_rest * (1 + velocity / 299792.458)  # Doppler shift
 
     # [3/8] Flux power spectrum
-    print("\n[3/8] Computing flux power spectrum P_F(k)...")
-    power_dict = compute_power_spectrum(flux, velocity_spacing)
-    print(f"Computed power spectrum with {len(power_dict['k'])} k-modes")
-    print(f"k range: {power_dict['k'][1]:.4f} to {
-          power_dict['k'][-1]:.2f} s/km")
-    print(f"Mean flux used: {power_dict['mean_flux']:.4f}")
-
     # [4/8] Column density distribution
-    cd_method = getattr(args, 'cd_method', 'simple')
-    print(
-        f"\n[4/8] Computing column density distribution f(N_HI) using {cd_method} method...")
+    # [4b/8] Line width distribution
+    # Run expensive computations in parallel when workers > 1
+    if num_workers > 1:
+        print(f"\n[3-5/8] Running expensive analyses in parallel with {num_workers} workers...")
+        print("-" * 70)
 
-    if cd_method == 'simple':
-        cddf_dict = compute_column_density_distribution(
-            tau, velocity_spacing, threshold=0.5, colden=colden,
-            redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
-            hubble=hubble, omega_m=omega_m)
-        print(f"Simple pixel optical depth method")
-        print(f"Identified {cddf_dict['n_absorbers']} absorbers")
-        if redshift and box_size_ckpc_h:
-            print(f"Absorption path length: dX = {cddf_dict['dX']:.2f} Mpc (comoving)")
-        if not np.isnan(cddf_dict['beta_fit']):
-            print(f"Power law index β = {cddf_dict['beta_fit']:.2f}")
-        else:
-            print("Power law fit: insufficient data")
+        cd_method = getattr(args, 'cd_method', 'simple')
 
-    elif cd_method == 'vpfit':
-        cddf_dict = compute_column_density_distribution_vpfit(
-            flux, wavelength, redshift, threshold=0.05
-        )
-        if 'error' not in cddf_dict:
-            print("VoigtFit method")
-            print("Fitted {cddf_dict['n_absorbers']} absorbers")
-            if cddf_dict['n_absorbers'] > 0:
-                print(f"  Column density range: {
-                      cddf_dict['N_HI'].min():.1e} - {cddf_dict['N_HI'].max():.1e} cm^-2")
-                print(
-                    f"  Mean b-parameter: {cddf_dict['b_params'].mean():.1f} km/s")
+        # Prepare arguments for each function
+        task_power = ('power', compute_power_spectrum, flux, velocity_spacing)
+        
+        if cd_method == 'simple':
+            task_cddf = ('cddf', compute_column_density_distribution,
+                        tau, velocity_spacing, 0.5, colden, redshift, box_size_ckpc_h, hubble, omega_m)
+        elif cd_method == 'vpfit':
+            task_cddf = ('cddf_vpfit', compute_column_density_distribution_vpfit,
+                        flux, wavelength, redshift, 0.05)
         else:
-            print(f"  Error: {cddf_dict['error']}")
-            print("  Falling back to simple method...")
+            task_cddf = ('cddf', compute_column_density_distribution,
+                        tau, velocity_spacing, 0.5, colden, redshift, box_size_ckpc_h, hubble, omega_m)
+
+        task_lwd = ('lwd', compute_line_width_distribution,
+                    tau, velocity_spacing, 0.5, colden)
+
+        tasks = [task_power, task_cddf, task_lwd]
+
+        # Execute in parallel
+        results = {}
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            future_to_task = {}
+            for task_name, func, *args in tasks:
+                future = executor.submit(func, *args)
+                future_to_task[future] = task_name
+
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    results[task_name] = future.result()
+                    print(f"  {task_name}: completed")
+                except Exception as e:
+                    print(f"  {task_name}: FAILED - {e}")
+                    results[task_name] = None
+
+        # Extract results
+        power_dict = results.get('power')
+        cddf_dict = results.get('cddf') or results.get('cddf_vpfit')
+        lwd_dict = results.get('lwd')
+
+        if power_dict:
+            print(f"Computed power spectrum with {len(power_dict['k'])} k-modes")
+            print(f"k range: {power_dict['k'][1]:.4f} to {power_dict['k'][-1]:.2f} s/km")
+            print(f"Mean flux used: {power_dict['mean_flux']:.4f}")
+
+        if cddf_dict and 'error' not in cddf_dict:
+            if cd_method == 'simple':
+                print(f"Identified {cddf_dict['n_absorbers']} absorbers")
+                if redshift and box_size_ckpc_h:
+                    print(f"Absorption path length: dX = {cddf_dict['dX']:.2f} Mpc (comoving)")
+                if not np.isnan(cddf_dict.get('beta_fit', np.nan)):
+                    print(f"Power law index β = {cddf_dict['beta_fit']:.2f}")
+            elif cd_method == 'vpfit':
+                print(f"Fitted {cddf_dict['n_absorbers']} absorbers")
+        else:
+            print(f"Column density computation failed or not available")
+
+        if lwd_dict and lwd_dict.get('n_absorbers', 0) > 0:
+            print(f"Line widths: {lwd_dict['n_absorbers']} absorbers, median b={lwd_dict['b_median']:.1f} km/s")
+    else:
+        # Sequential execution (original code)
+        print("\n[3/8] Computing flux power spectrum P_F(k)...")
+        power_dict = compute_power_spectrum(flux, velocity_spacing)
+        print(f"Computed power spectrum with {len(power_dict['k'])} k-modes")
+        print(f"k range: {power_dict['k'][1]:.4f} to {power_dict['k'][-1]:.2f} s/km")
+        print(f"Mean flux used: {power_dict['mean_flux']:.4f}")
+
+        cd_method = getattr(args, 'cd_method', 'simple')
+        print(f"\n[4/8] Computing column density distribution f(N_HI) using {cd_method} method...")
+
+        if cd_method == 'simple':
+            cddf_dict = compute_column_density_distribution(
+                tau, velocity_spacing, threshold=0.5, colden=colden,
+                redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
+                hubble=hubble, omega_m=omega_m)
+            print(f"Simple pixel optical depth method")
+            print(f"Identified {cddf_dict['n_absorbers']} absorbers")
+            if redshift and box_size_ckpc_h:
+                print(f"Absorption path length: dX = {cddf_dict['dX']:.2f} Mpc (comoving)")
+            if not np.isnan(cddf_dict.get('beta_fit', np.nan)):
+                print(f"Power law index β = {cddf_dict['beta_fit']:.2f}")
+            else:
+                print("Power law fit: insufficient data")
+
+        elif cd_method == 'vpfit':
+            cddf_dict = compute_column_density_distribution_vpfit(
+                flux, wavelength, redshift, threshold=0.05
+            )
+            if 'error' not in cddf_dict:
+                print("VoigtFit method")
+                print(f"Fitted {cddf_dict['n_absorbers']} absorbers")
+                if cddf_dict['n_absorbers'] > 0:
+                    print(f"  Column density range: {cddf_dict['N_HI'].min():.1e} - {cddf_dict['N_HI'].max():.1e} cm^-2")
+                    print(f"  Mean b-parameter: {cddf_dict['b_params'].mean():.1f} km/s")
+            else:
+                print(f"  Error: {cddf_dict['error']}")
+                print("  Falling back to simple method...")
+                cddf_dict = compute_column_density_distribution(
+                    tau, velocity_spacing, threshold=0.5, colden=colden,
+                    redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
+                    hubble=hubble, omega_m=omega_m)
+
+        else:
+            print(f"Unknown method '{cd_method}', using simple")
             cddf_dict = compute_column_density_distribution(
                 tau, velocity_spacing, threshold=0.5, colden=colden,
                 redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
                 hubble=hubble, omega_m=omega_m)
 
-    else:
-        print(f"Unknown method '{cd_method}', using simple")
-        cddf_dict = compute_column_density_distribution(
-            tau, velocity_spacing, threshold=0.5, colden=colden,
-            redshift=redshift, box_size_ckpc_h=box_size_ckpc_h,
-            hubble=hubble, omega_m=omega_m)
-
-    # [4b/8] Line width distribution (b-parameter analysis)
-    print("\n[4b/8] Computing line width distribution b(N_HI)...")
-    try:
-        lwd_dict = compute_line_width_distribution(
-            tau, velocity_spacing, threshold=0.5, colden=colden)
-        print(f"Identified {
-              lwd_dict['n_absorbers']} absorbers with b-parameters")
-        if lwd_dict['n_absorbers'] > 0:
-            print(f"Median b-parameter: {lwd_dict['b_median']:.1f} km/s")
-            print(
-                f"Mean b-parameter: {lwd_dict['b_mean']:.1f} ± {lwd_dict['b_std']:.1f} km/s")
-            T_mean = 1.28e4 * lwd_dict['b_mean']**2
-            print(f"Implied temperature: {T_mean/1e3:.0f} × 10³ K")
-        else:
-            print("Warning: No absorbers found for line width analysis")
+        print("\n[4b/8] Computing line width distribution b(N_HI)...")
+        try:
+            lwd_dict = compute_line_width_distribution(
+                tau, velocity_spacing, threshold=0.5, colden=colden)
+            print(f"Identified {lwd_dict['n_absorbers']} absorbers with b-parameters")
+            if lwd_dict['n_absorbers'] > 0:
+                print(f"Median b-parameter: {lwd_dict['b_median']:.1f} km/s")
+                print(f"Mean b-parameter: {lwd_dict['b_mean']:.1f} ± {lwd_dict['b_std']:.1f} km/s")
+                T_mean = 1.28e4 * lwd_dict['b_mean']**2
+                print(f"Implied temperature: {T_mean/1e3:.0f} × 10³ K")
+            else:
+                print("Warning: No absorbers found for line width analysis")
+                lwd_dict = None
+        except Exception as e:
+            print(f"Warning: Line width analysis failed: {e}")
             lwd_dict = None
-    except Exception as e:
-        print(f"Warning: Line width analysis failed: {e}")
-        lwd_dict = None
 
     # [4c/8] Temperature-density relation (if data available)
     print("\n[4c/8] Checking for temperature-density data...")

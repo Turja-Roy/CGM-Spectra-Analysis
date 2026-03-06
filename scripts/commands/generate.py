@@ -14,6 +14,7 @@ def cmd_generate(args):
     resolution = args.res
     random_seed = args.seed
     output_file = args.output
+    use_mpi = getattr(args, 'mpi', False)
     line_arg = args.line if hasattr(args, 'line') else 'lya'
 
     # Parse line specification
@@ -111,6 +112,19 @@ def cmd_generate(args):
     print("\n[3/5] Initializing fake_spectra (applying Python 3.13 bugfixes)...")
     apply_fake_spectra_bugfixes()
 
+    # Check for MPI support
+    mpi_comm = None
+    if use_mpi:
+        try:
+            from mpi4py import MPI
+            mpi_comm = MPI.COMM_WORLD
+            if mpi_comm.Get_rank() == 0:
+                print(f"MPI initialized: {mpi_comm.Get_size()} processes")
+        except ImportError:
+            print("Error: mpi4py not installed. Install with: pip install mpi4py")
+            print("Or run without --mpi flag for sequential processing.")
+            return 1
+
     # Import after bugfixes applied
     from fake_spectra import spectra
 
@@ -134,19 +148,35 @@ def cmd_generate(args):
     print("\n[4/5] Initializing spectra object...")
 
     try:
-        spec = spectra.Spectra(
-            num=snapshot_num,                    # Snapshot number (e.g., 86)
-            base=snapshot_dir or '.',            # Directory containing snapshot
-            savefile=savefile,
-            savedir='',                          # Don't append subdirectory to savefile
-            res=resolution,
-            reload_file=True,                    # Set to True to generate new spectra
-            # Sightline positions (determines count)
-            cofm=cofm,
-            axis=axis,
-            load_halo=False,
-            quiet=False
-        )
+        if use_mpi and mpi_comm is not None:
+            from fake_spectra import randspectra
+            print(f"Using MPI with {mpi_comm.Get_size()} processes")
+            spec = randspectra.RandSpectra(
+                num=snapshot_num,
+                base=snapshot_dir or '.',
+                savefile=savefile,
+                savedir='',
+                res=resolution,
+                reload_file=True,
+                thresh=0.0,
+                MPI=mpi_comm,
+                kernel="tophat",  # Required for MPI on Arepo/Voronoi
+                quiet=False
+            )
+        else:
+            spec = spectra.Spectra(
+                num=snapshot_num,                    # Snapshot number (e.g., 86)
+                base=snapshot_dir or '.',            # Directory containing snapshot
+                savefile=savefile,
+                savedir='',                          # Don't append subdirectory to savefile
+                res=resolution,
+                reload_file=True,                    # Set to True to generate new spectra
+                # Sightline positions (determines count)
+                cofm=cofm,
+                axis=axis,
+                load_halo=False,
+                quiet=False
+            )
         print(f"Loaded snapshot {snapshot_num}")
         print(f"Initialized {cofm.shape[0]} sightlines")
         print(f"Velocity range: {spec.vmax:.2f} km/s")

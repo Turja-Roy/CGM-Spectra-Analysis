@@ -105,6 +105,8 @@ Documentation:
                             help='Load sightlines from HDF5 file (overrides -n and --seed)')
     parser_gen.add_argument('-o', '--output', type=str, default=None,
                             help='Output file path (default: auto-generated)')
+    parser_gen.add_argument('--mpi', action='store_true',
+                            help='Use MPI parallelization via fake_spectra (requires mpi4py, run with mpirun)')
     parser_gen.set_defaults(func=cmd_generate)
 
     parser_analyze = subparsers.add_parser(
@@ -120,6 +122,8 @@ Documentation:
                                 'vpfit (Voigt profile fitting)')
     parser_analyze.add_argument('--max-sightlines', type=int, default=None,
                                 help='Maximum number of sightlines to analyze (for memory-limited systems)')
+    parser_analyze.add_argument('--workers', type=int, default=1,
+                                help='Number of parallel workers for analysis (default: 1, use 4-8 for parallel)')
     parser_analyze.set_defaults(func=cmd_analyze)
 
     parser_compare = subparsers.add_parser('compare',

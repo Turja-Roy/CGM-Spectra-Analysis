@@ -14,6 +14,9 @@ pip install h5py numpy matplotlib scipy scikit-learn pandas
 
 # For spectra generation (optional)
 pip install fake_spectra
+
+# For MPI parallelization (optional, for generate command on HPC)
+pip install mpi4py
 ```
 
 ### Basic Usage
@@ -66,6 +69,7 @@ Generate synthetic spectra from simulation snapshot
   - Multiple: `--line lya,civ,ovi`
 - `--sightlines-from`: Use pre-generated sightlines from file
 - `-o, --output`: Output file path
+- `--mpi`: Use MPI parallelization via fake_spectra (requires mpi4py, run with mpirun)
 
 **Examples:**
 ```bash
@@ -78,6 +82,9 @@ python analyze_spectra.py generate 'data/1P/1P_p1_*/snap_080.hdf5' \
 
 # Multi-line analysis
 python analyze_spectra.py generate data/snap_080.hdf5 -n 10000 --line lya,civ,ovi
+
+# MPI parallel generation (on HPC)
+mpirun -n 48 python analyze_spectra.py generate data/snap_080.hdf5 -n 10000 --mpi
 ```
 
 ### `analyze`
@@ -92,9 +99,19 @@ Comprehensive analysis of spectra file
 - Temperature-density relation T(ρ) (if available)
 - Metal line statistics (if multi-line data)
 
+**Options:**
+- `--line`: Spectral line to analyze (auto-detect if not specified)
+- `--cd-method`: Column density method (simple or vpfit)
+- `--max-sightlines`: Maximum sightlines to analyze (for memory-limited systems)
+- `--workers`: Number of parallel workers (default: 1, use 4-8 for parallel)
+
 **Example:**
 ```bash
+# Sequential analysis
 python analyze_spectra.py analyze spectra_file.hdf5
+
+# Parallel analysis with 8 workers (for large datasets)
+python analyze_spectra.py analyze spectra_file.hdf5 --workers 8
 ```
 
 **Output**: 
