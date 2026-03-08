@@ -31,31 +31,100 @@ PYBIND11_MODULE(_analysis_cpp, m) {
     }, "Compute basic flux statistics from optical depth",
           py::arg("tau"));
     
-    m.def("compute_power_spectrum", &cgm::analysis::compute_power_spectrum,
+    m.def("compute_power_spectrum", 
+          [](const Eigen::Ref<const Eigen::ArrayXXf>& flux, double velocity_spacing, int chunk_size) {
+        auto result = cgm::analysis::compute_power_spectrum(flux, velocity_spacing, chunk_size);
+        py::dict d;
+        d["k"] = result.k;
+        d["P_k_mean"] = result.P_k_mean;
+        d["P_k_std"] = result.P_k_std;
+        d["P_k_err"] = result.P_k_err;
+        d["n_modes"] = result.n_modes;
+        d["mean_flux"] = result.mean_flux;
+        d["n_sightlines"] = result.n_sightlines;
+        d["velocity_spacing"] = result.velocity_spacing;
+        return d;
+    },
           "Compute power spectrum from flux array",
           py::arg("flux"),
           py::arg("velocity_spacing"),
           py::arg("chunk_size") = 1000);
     
-    m.def("compute_column_density_distribution", &cgm::analysis::compute_column_density_distribution,
+    m.def("compute_column_density_distribution", 
+          [](const Eigen::Ref<const Eigen::ArrayXXf>& tau, double velocity_spacing, float threshold,
+             const Eigen::ArrayXXf& colden, double redshift, 
+             double box_size_ckpc_h, double hubble, double omega_m) {
+        const Eigen::Ref<const Eigen::ArrayXXf>* colden_ptr = nullptr;
+        Eigen::Ref<const Eigen::ArrayXXf> colden_ref(colden);
+        if (colden.size() > 0) {
+            colden_ptr = &colden_ref;
+        }
+        auto result = cgm::analysis::compute_column_density_distribution(
+            tau, velocity_spacing, threshold, colden_ptr, redshift, box_size_ckpc_h, hubble, omega_m);
+        py::dict d;
+        d["N_HI"] = result.N_HI;
+        d["counts"] = result.counts;
+        d["bins"] = result.bins;
+        d["bin_centers"] = result.bin_centers;
+        d["f_N"] = result.f_N;
+        d["beta_fit"] = result.beta_fit;
+        d["n_absorbers"] = result.n_absorbers;
+        d["n_sightlines"] = result.n_sightlines;
+        d["dX"] = result.dX;
+        d["redshift"] = result.redshift;
+        return d;
+    },
           "Compute column density distribution function",
           py::arg("tau"),
           py::arg("velocity_spacing"),
           py::arg("threshold") = 0.5f,
-          py::arg("colden") = nullptr,
+          py::arg("colden") = Eigen::ArrayXXf(),
           py::arg("redshift") = std::nan(""),
           py::arg("box_size_ckpc_h") = std::nan(""),
           py::arg("hubble") = 0.6774,
           py::arg("omega_m") = 0.3089);
     
-    m.def("compute_line_width_distribution", &cgm::analysis::compute_line_width_distribution,
+    m.def("compute_line_width_distribution", 
+          [](const Eigen::Ref<const Eigen::ArrayXXf>& tau, double velocity_spacing, float threshold,
+             const Eigen::ArrayXXf& colden) {
+        const Eigen::Ref<const Eigen::ArrayXXf>* colden_ptr = nullptr;
+        Eigen::Ref<const Eigen::ArrayXXf> colden_ref(colden);
+        if (colden.size() > 0) {
+            colden_ptr = &colden_ref;
+        }
+        auto result = cgm::analysis::compute_line_width_distribution(tau, velocity_spacing, threshold, colden_ptr);
+        py::dict d;
+        d["N_HI"] = result.N_HI;
+        d["b_params"] = result.b_params;
+        d["temperatures"] = result.temperatures;
+        d["b_median"] = result.b_median;
+        d["b_mean"] = result.b_mean;
+        d["b_std"] = result.b_std;
+        d["n_absorbers"] = result.n_absorbers;
+        return d;
+    },
           "Compute line width (b-parameter) distribution",
           py::arg("tau"),
           py::arg("velocity_spacing"),
           py::arg("threshold") = 0.5f,
-          py::arg("colden") = nullptr);
+          py::arg("colden") = Eigen::ArrayXXf());
     
-    m.def("compute_temperature_density_relation", &cgm::analysis::compute_temperature_density_relation,
+    m.def("compute_temperature_density_relation", 
+          [](const Eigen::Ref<const Eigen::ArrayXXf>& temperature,
+             const Eigen::Ref<const Eigen::ArrayXXf>& density,
+             const Eigen::Ref<const Eigen::ArrayXXf>& tau, float min_tau) {
+        auto result = cgm::analysis::compute_temperature_density_relation(temperature, density, tau, min_tau);
+        py::dict d;
+        d["temperature"] = result.temperature;
+        d["density"] = result.density;
+        d["log_T"] = result.log_T;
+        d["log_rho"] = result.log_rho;
+        d["T0"] = result.T0;
+        d["gamma"] = result.gamma;
+        d["gamma_err"] = result.gamma_err;
+        d["n_pixels"] = result.n_pixels;
+        return d;
+    },
           "Compute temperature-density relation",
           py::arg("temperature"),
           py::arg("density"),

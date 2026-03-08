@@ -142,7 +142,45 @@ ColumnDensityResult compute_column_density_distribution(
     result.bin_centers = bin_centers;
     result.counts = counts;
     result.f_N = f_N;
-    result.beta_fit = std::nan("");
+    
+    // Fit power law: f(N) = A * N^(-beta) in range 12 < log(N) < 14.5
+    // In log-log space: log(f) = log(A) - beta * log(N)
+    // Linear fit: y = intercept + slope * x, where slope = -beta
+    double beta_fit = std::nan("");
+    
+    std::vector<double> log_N_fit;
+    std::vector<double> log_f_fit;
+    
+    for (int i = 0; i < n_bins; ++i) {
+        if (bin_centers(i) > 1e12 && bin_centers(i) < 3e14 && counts(i) > 0) {
+            double log_N = std::log10(bin_centers(i));
+            double f_val = f_N(i);
+            if (f_val > 0 && std::isfinite(log_N)) {
+                log_N_fit.push_back(log_N);
+                log_f_fit.push_back(std::log10(f_val + 1e-10));
+            }
+        }
+    }
+    
+    if (log_N_fit.size() > 5) {
+        // Least squares linear fit
+        double sum_x = 0, sum_y = 0, sum_xy = 0, sum_xx = 0;
+        int n = log_N_fit.size();
+        for (int i = 0; i < n; ++i) {
+            sum_x += log_N_fit[i];
+            sum_y += log_f_fit[i];
+            sum_xy += log_N_fit[i] * log_f_fit[i];
+            sum_xx += log_N_fit[i] * log_N_fit[i];
+        }
+        
+        double denominator = n * sum_xx - sum_x * sum_x;
+        if (std::abs(denominator) > 1e-10) {
+            double slope = (n * sum_xy - sum_x * sum_y) / denominator;
+            beta_fit = -slope;  // f(N) ∝ N^(-beta), so beta = -slope
+        }
+    }
+    
+    result.beta_fit = beta_fit;
     
     return result;
 }

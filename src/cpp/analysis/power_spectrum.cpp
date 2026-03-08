@@ -10,6 +10,69 @@
 namespace cgm {
 namespace analysis {
 
+// Cooley-Tukey FFT (radix-2, in-place)
+static void fft_radix2(std::complex<float>* data, int n) {
+    if (n <= 1) return;
+    
+    // Bit reversal permutation
+    int j = 0;
+    for (int i = 0; i < n - 1; i++) {
+        if (i < j) {
+            std::swap(data[i], data[j]);
+        }
+        int k = n / 2;
+        while (k <= j) {
+            j -= k;
+            k /= 2;
+        }
+        j += k;
+    }
+    
+    // Cooley-Tukey iterative FFT
+    for (int len = 2; len <= n; len *= 2) {
+        float angle = -2.0f * M_PI / len;
+        std::complex<float> wn(std::cos(angle), std::sin(angle));
+        for (int i = 0; i < n; i += len) {
+            std::complex<float> w(1.0f, 0.0f);
+            for (int k = 0; k < len / 2; k++) {
+                std::complex<float> u = data[i + k];
+                std::complex<float> t = w * data[i + k + len / 2];
+                data[i + k] = u + t;
+                data[i + k + len / 2] = u - t;
+                w *= wn;
+            }
+        }
+    }
+}
+
+// Compute power spectrum using O(N log N) FFT
+static Eigen::VectorXd compute_fft_power(const Eigen::ArrayXf& flux_contrast, int n_pixels) {
+    // Pad to power of 2 if needed
+    int n = 1;
+    while (n < n_pixels) n *= 2;
+    
+    std::vector<std::complex<float>> fft_data(n);
+    for (int i = 0; i < n_pixels; i++) {
+        fft_data[i] = std::complex<float>(flux_contrast(i), 0.0f);
+    }
+    for (int i = n_pixels; i < n; i++) {
+        fft_data[i] = std::complex<float>(0.0f, 0.0f);
+    }
+    
+    fft_radix2(fft_data.data(), n);
+    
+    // Compute power spectrum (only first n_pixels/2 + 1 values are unique for real input)
+    int n_k = n_pixels / 2 + 1;
+    Eigen::VectorXd power(n_k);
+    for (int i = 0; i < n_k; i++) {
+        float real = fft_data[i].real();
+        float imag = fft_data[i].imag();
+        power(i) = (real * real + imag * imag) / n_pixels;
+    }
+    
+    return power;
+}
+
 PowerSpectrumResult compute_power_spectrum(
     const Eigen::Ref<const Eigen::ArrayXXf>& flux,
     double velocity_spacing,
@@ -43,22 +106,16 @@ PowerSpectrumResult compute_power_spectrum(
         for (int c = 0; c < n_chunks; ++c) {
             int start = c * chunk_size;
             int end = std::min((c + 1) * chunk_size, n_sightlines);
-            int chunk_n = end - start;
             
-            for (int i = 0; i < chunk_n; ++i) {
-                Eigen::ArrayXf delta_F = flux.row(start + i) / mean_flux - 1.0f;
+            for (int i = start; i < end; ++i) {
+                Eigen::ArrayXf delta_F = flux.row(i) / mean_flux - 1.0f;
+                
+                Eigen::VectorXd power = compute_fft_power(delta_F, n_pixels);
                 
                 for (int j = 0; j < n_k; ++j) {
-                    float real = 0.0f, imag = 0.0f;
-                    for (int n = 0; n < n_pixels; ++n) {
-                        float angle = -2.0f * M_PI * j * n / n_pixels;
-                        real += delta_F(n) * cosf(angle);
-                        imag += delta_F(n) * sinf(angle);
-                    }
-                    
-                    float power = (real * real + imag * imag) / n_pixels;
-                    local_power_sum[j] += power;
-                    local_power_sum_sq[j] += power * power;
+                    double p = power(j);
+                    local_power_sum[j] += p;
+                    local_power_sum_sq[j] += p * p;
                 }
             }
         }
