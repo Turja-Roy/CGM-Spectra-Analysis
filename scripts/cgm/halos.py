@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+from scripts import cgm_cpp
+
 
 # ==================== #
 # HALO CATALOG LOADING #
@@ -234,43 +236,7 @@ def filter_halos_by_mass(catalog, mass_range, mass_type='mass_total'):
 
 
 def filter_isolated_halos(catalog, isolation_factor=3.0, radius_type='radius_vir'):
-    if len(catalog) == 0:
-        return catalog
-
-    positions = catalog[['position_x', 'position_y', 'position_z']].values
-    masses = catalog['mass_total'].values
-    radii = catalog[radius_type].values
-
-    isolated_mask = np.ones(len(catalog), dtype=bool)
-
-    for i in range(len(catalog)):
-        # Check all other halos
-        for j in range(len(catalog)):
-            if i == j:
-                continue
-
-            # Distance between halos
-            dx = positions[j] - positions[i]
-
-            # Handle periodic boundary conditions
-            boxsize = catalog.iloc[i]['boxsize']
-            dx = np.where(dx > boxsize/2, dx - boxsize, dx)
-            dx = np.where(dx < -boxsize/2, dx + boxsize, dx)
-
-            distance = np.sqrt(np.sum(dx**2))
-
-            # Check if neighbor is massive and too close
-            isolation_radius = isolation_factor * radii[i]
-            if distance < isolation_radius and masses[j] > 0.5 * masses[i]:
-                isolated_mask[i] = False
-                break
-
-    filtered = catalog[isolated_mask].copy()
-
-    print(f"Isolation filter ({isolation_factor:.1f} x R_vir): "
-          f"{len(filtered):,} / {len(catalog):,} isolated halos")
-
-    return filtered
+    return cgm_cpp.filter_isolated_halos(catalog, isolation_factor, radius_type)
 
 
 # Compute gas temperature from internal energy and electron abundance.

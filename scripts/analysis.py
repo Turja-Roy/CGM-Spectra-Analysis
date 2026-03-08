@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from astropy.cosmology import FlatLambdaCDM
 
+from scripts import analysis_cpp
+
 
 #######################
 # COSMOLOGY UTILITIES #
@@ -37,90 +39,11 @@ def compute_absorption_path_length(redshift, box_size_ckpc_h, hubble=0.6774,
 #############################
 
 def compute_flux_statistics(tau):
-    flux = np.exp(-tau)
-
-    stats = {
-        'mean_flux': float(np.mean(flux)),
-        'median_flux': float(np.median(flux)),
-        'std_flux': float(np.std(flux)),
-        'min_flux': float(np.min(flux)),
-        'max_flux': float(np.max(flux)),
-        'mean_tau': float(np.mean(tau)),
-        'median_tau': float(np.median(tau)),
-        'effective_tau': float(-np.log(np.mean(flux))),
-    }
-
-    # Absorption statistics
-    total_pixels = flux.size
-    stats['deep_absorption_frac'] = float((flux < 0.1).sum() / total_pixels)
-    stats['moderate_absorption_frac'] = float(
-        ((flux >= 0.1) & (flux < 0.5)).sum() / total_pixels)
-    stats['weak_absorption_frac'] = float((flux >= 0.5).sum() / total_pixels)
-
-    return stats
+    return analysis_cpp.compute_flux_statistics(tau)
 
 
 def compute_power_spectrum(flux, velocity_spacing, chunk_size=1000):
-    n_sightlines, n_pixels = flux.shape
-
-    # Normalize flux to get flux contrast
-    mean_flux = np.mean(flux)
-
-    # Wavenumber array (s/km units)
-    k = np.fft.rfftfreq(n_pixels, d=velocity_spacing)
-    n_k = len(k)
-
-    # Initialize accumulators for mean and variance computation
-    # Using Welford's online algorithm to avoid storing all power spectra
-    power_sum = np.zeros(n_k)
-    power_sum_sq = np.zeros(n_k)
-
-    # Process in chunks to reduce memory usage
-    n_chunks = int(np.ceil(n_sightlines / chunk_size))
-
-    for chunk_idx in range(n_chunks):
-        start_idx = chunk_idx * chunk_size
-        end_idx = min((chunk_idx + 1) * chunk_size, n_sightlines)
-
-        # Get flux chunk and compute contrast
-        flux_chunk = flux[start_idx:end_idx]
-        delta_F_chunk = flux_chunk / mean_flux - 1.0
-
-        # Compute power for this chunk
-        for i in range(delta_F_chunk.shape[0]):
-            # FFT of flux contrast
-            flux_fft = np.fft.rfft(delta_F_chunk[i])
-            # Power spectrum (dimensionless, normalized by pixel count)
-            power = np.abs(flux_fft)**2 / n_pixels
-
-            # Update running sums
-            power_sum += power
-            power_sum_sq += power**2
-
-    # Compute mean and standard deviation
-    P_k_mean = (power_sum / n_sightlines) * velocity_spacing
-
-    # Variance: Var(X) = E[X^2] - E[X]^2
-    mean_power = power_sum / n_sightlines
-    mean_power_sq = power_sum_sq / n_sightlines
-    variance = mean_power_sq - mean_power**2
-    P_k_std = np.sqrt(np.maximum(variance, 0)) * \
-        velocity_spacing  # Ensure non-negative
-    P_k_err = P_k_std / np.sqrt(n_sightlines)
-
-    # Number of independent modes (useful for error estimation)
-    n_modes = np.ones_like(k) * n_sightlines
-
-    return {
-        'k': k,
-        'P_k_mean': P_k_mean,
-        'P_k_std': P_k_std,
-        'P_k_err': P_k_err,
-        'mean_flux': mean_flux,
-        'n_modes': n_modes,
-        'n_sightlines': n_sightlines,
-        'velocity_spacing': velocity_spacing
-    }
+    return analysis_cpp.compute_power_spectrum(flux, velocity_spacing, chunk_size)
 
 
 def ensure_directory(path):
@@ -140,147 +63,10 @@ def get_snapshot_number(filepath):
 def compute_column_density_distribution(tau, velocity_spacing, threshold=0.5, colden=None,
                                        redshift=None, box_size_ckpc_h=None, hubble=0.6774,
                                        omega_m=0.3089):
-    """
-    Compute column density distribution f(N_HI) with proper cosmological normalization.
-
-    Notes:
-
-    The differential CDDF is defined as:
-        f(N) = dN/dlog10(N_HI) per unit absorption path length
-        
-    Units: [Mpc^-1] in comoving coordinates
-    
-    Normalization:
-        f(N) = counts / (n_sightlines * delta_log_N * dX)
-        
-    where dX is the comoving absorption path length (box_size in Mpc).
-    """
-    # Corrected constant: 8.51e11 cm^-2 / (km/s), empirically calibrated
-    TAU_TO_COLDEN_CONSTANT = 8.51e11
-
-    column_densities = []
-
-    for i in range(tau.shape[0]):
-        tau_line = tau[i, :]
-        colden_line = colden[i, :] if colden is not None else None
-
-        # Find absorption features (contiguous pixels above threshold)
-        absorbing = tau_line > threshold
-
-        # Label connected regions
-        in_feature = False
-        feature_start = 0
-
-        for j in range(len(tau_line)):
-            if absorbing[j] and not in_feature:
-                # Start of new feature
-                in_feature = True
-                feature_start = j
-            elif not absorbing[j] and in_feature:
-                # End of feature
-                in_feature = False
-                
-                # Compute column density
-                # Use peak (max) column density, not integrated sum
-                # The colden array contains column density per pixel in cm^-2
-                # Peak value represents the absorber's characteristic N_HI
-                if colden_line is not None:
-                    N_HI = np.max(colden_line[feature_start:j])
-                else:
-                    feature_tau = tau_line[feature_start:j]
-                    N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
-
-                if N_HI > 1e12:  # Only count above sensitivity threshold
-                    column_densities.append(N_HI)
-
-        # Handle case where feature extends to edge
-        if in_feature:
-            if colden_line is not None:
-                N_HI = np.max(colden_line[feature_start:])
-            else:
-                feature_tau = tau_line[feature_start:]
-                N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
-            if N_HI > 1e12:
-                column_densities.append(N_HI)
-
-    column_densities = np.array(column_densities)
-    n_sightlines = tau.shape[0]
-    
-    # Compute absorption path length for normalization
-    if redshift is not None and box_size_ckpc_h is not None:
-        dX = compute_absorption_path_length(redshift, box_size_ckpc_h, hubble, omega_m)
-    else:
-        # Fallback: no normalization (for backward compatibility)
-        dX = 1.0
-        if redshift is not None or box_size_ckpc_h is not None:
-            print("Warning: Missing redshift or box_size for CDDF normalization. "
-                  "Setting dX=1.0 (unnormalized)")
-
-    # Create histogram in log space
-    if len(column_densities) > 0:
-        log_N_min = 12.0  # log10(N_HI)
-        log_N_max = 22.0
-        n_bins = 50
-
-        bins = np.logspace(log_N_min, log_N_max, n_bins)
-        counts, bin_edges = np.histogram(column_densities, bins=bins)
-
-        # Compute log-space bin properties for proper normalization
-        log_bin_edges = np.log10(bin_edges)
-        delta_log_N = np.diff(log_bin_edges)  # Constant for logspace bins
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        log_bin_centers = np.log10(bin_centers)
-        
-        # Compute properly normalized f(N) in units of [Mpc^-1]
-        # f(N) = dN/dlog10(N) per unit comoving path length
-        f_N = counts / (n_sightlines * delta_log_N * dX)
-
-        # Fit power law in range 12 < log(N) < 14.5 (typical Lyman-alpha forest)
-        # Adjusted range to focus on well-populated bins with MAX colden method
-        fit_mask = (log_bin_centers > 12.0) & (log_bin_centers < 14.5)
-
-        if np.sum(fit_mask) > 5 and np.sum(counts[fit_mask]) > 0:
-            # Fit f(N) = A * N^-beta using properly normalized f(N)
-            f_N_fit = f_N[fit_mask]
-            log_f_fit = np.log10(f_N_fit + 1e-10)  # Avoid log(0)
-            log_N_fit = log_bin_centers[fit_mask]
-
-            # Linear fit in log-log space
-            valid = np.isfinite(log_f_fit) & (f_N_fit > 0)
-            if np.sum(valid) > 2:
-                coeffs = np.polyfit(log_N_fit[valid], log_f_fit[valid], 1)
-                beta_fit = -coeffs[0]  # Negative slope
-            else:
-                beta_fit = np.nan
-        else:
-            beta_fit = np.nan
-    else:
-        bins = np.logspace(12, 22, 50)
-        counts = np.zeros(len(bins) - 1)
-        bin_edges = bins
-        log_bin_edges = np.log10(bin_edges)
-        delta_log_N = np.diff(log_bin_edges)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        log_bin_centers = np.log10(bin_centers)
-        f_N = np.zeros(len(counts))
-        beta_fit = np.nan
-
-    return {
-        'N_HI': column_densities,
-        'counts': counts,
-        'bins': bin_edges,
-        'bin_centers': bin_centers,
-        'log_bin_edges': log_bin_edges,
-        'log10_N_HI': log_bin_centers,
-        'delta_log_N': delta_log_N,
-        'beta_fit': beta_fit,
-        'n_absorbers': len(column_densities),
-        'n_sightlines': n_sightlines,
-        'f_N': f_N,
-        'f_N_HI': f_N,  # Backward compatibility
-        'dX': dX,
-        'redshift': redshift if redshift is not None else np.nan,
-    }
+    return analysis_cpp.compute_column_density_distribution(
+        tau, velocity_spacing, threshold, colden,
+        redshift, box_size_ckpc_h, hubble, omega_m
+    )
 
 
 def compute_effective_optical_depth(tau):
@@ -305,170 +91,11 @@ def compute_effective_optical_depth(tau):
 
 def compute_line_width_distribution(tau, velocity_spacing, threshold=0.5, colden=None):
     """Compute line width (Doppler b-parameter) distribution."""
-    from scipy.optimize import curve_fit
-    from scipy.signal import find_peaks
-
-    TAU_TO_COLDEN_CONSTANT = 8.51e11  # cm^-2 / (km/s)
-
-    column_densities = []
-    b_parameters = []
-
-    def voigt_approx(v, tau_0, b, v_center):
-        a = 4.7e-4  # Damping parameter for Lyman-alpha
-        u = (v - v_center) / b
-        tau = tau_0 * np.exp(-u**2)
-        return tau
-
-    for i in range(tau.shape[0]):
-        tau_line = tau[i, :]
-        colden_line = colden[i, :] if colden is not None else None
-
-        # Find peaks in optical depth (absorption features)
-        peaks, properties = find_peaks(tau_line, height=threshold, distance=5)
-
-        for peak_idx in peaks:
-            # Define feature extent (where tau drops to threshold)
-            left = peak_idx
-            while left > 0 and tau_line[left] > threshold * 0.3:
-                left -= 1
-
-            right = peak_idx
-            while right < len(tau_line) - 1 and tau_line[right] > threshold * 0.3:
-                right += 1
-
-            if right - left < 3:  # Too narrow to fit
-                continue
-
-            # Extract feature
-            feature_tau = tau_line[left:right+1]
-            feature_v = np.arange(len(feature_tau)) * velocity_spacing
-
-            # Initial guess for Voigt fit
-            tau_0_guess = tau_line[peak_idx]
-            v_center_guess = (peak_idx - left) * velocity_spacing
-            b_guess = 20.0  # km/s, typical IGM value
-
-            try:
-                # Fit Voigt profile
-                popt, _ = curve_fit(
-                    voigt_approx,
-                    feature_v,
-                    feature_tau,
-                    p0=[tau_0_guess, b_guess, v_center_guess],
-                    bounds=([0, 1.0, 0], [np.inf, 100.0, feature_v[-1]]),
-                    maxfev=1000
-                )
-
-                tau_0_fit, b_fit, v_center_fit = popt
-
-                # Estimate column density (use peak, not sum)
-                if colden_line is not None:
-                    N_HI = np.max(colden_line[left:right+1])
-                else:
-                    N_HI = TAU_TO_COLDEN_CONSTANT * np.sum(feature_tau) * velocity_spacing
-
-                # Only keep physically reasonable absorbers
-                if N_HI > 1e12 and 2.0 < b_fit < 80.0:
-                    column_densities.append(N_HI)
-                    b_parameters.append(b_fit)
-
-            except (RuntimeError, ValueError):
-                # Fit failed, skip this feature
-                continue
-
-    column_densities = np.array(column_densities)
-    b_parameters = np.array(b_parameters)
-
-    # Convert b to temperature: T(K) = 1.28e4 * b(km/s)^2
-    temperatures = 1.28e4 * b_parameters**2
-
-    return {
-        'N_HI': column_densities,
-        'b_params': b_parameters,
-        'temperatures': temperatures,
-        'b_median': float(np.median(b_parameters)) if len(b_parameters) > 0 else np.nan,
-        'b_mean': float(np.mean(b_parameters)) if len(b_parameters) > 0 else np.nan,
-        'b_std': float(np.std(b_parameters)) if len(b_parameters) > 0 else np.nan,
-        'n_absorbers': len(b_parameters)
-    }
+    return analysis_cpp.compute_line_width_distribution(tau, velocity_spacing, threshold, colden)
 
 
 def compute_temperature_density_relation(temperature, density, tau, min_tau=0.1):
-    # Flatten arrays and filter by optical depth
-    temp_flat = temperature.flatten()
-    dens_flat = density.flatten()
-    tau_flat = tau.flatten()
-
-    # Filter: only include absorbing gas (tau > min_tau) and valid values
-    mask = (tau_flat > min_tau) & (temp_flat > 0) & (dens_flat > 0)
-    mask &= np.isfinite(temp_flat) & np.isfinite(dens_flat)
-
-    temp_filtered = temp_flat[mask]
-    dens_filtered = dens_flat[mask]
-
-    if len(temp_filtered) < 100:
-        print(f"  Warning: Only {len(temp_filtered)} valid pixels for T-ρ fit")
-        return {
-            'temperature': temp_filtered,
-            'density': dens_filtered,
-            'log_T': np.array([]),
-            'log_rho': np.array([]),
-            'T0': np.nan,
-            'gamma': np.nan,
-            'gamma_err': np.nan,
-            'n_pixels': len(temp_filtered)
-        }
-
-    # Convert density to overdensity (ρ/ρ_mean)
-    rho_mean = np.median(dens_filtered)
-    overdensity = dens_filtered / rho_mean
-
-    # Take logarithms for power-law fit
-    log_T = np.log10(temp_filtered)
-    log_rho = np.log10(overdensity)
-
-    # Fit T-ρ relation: log(T) = log(T0) + (gamma-1) * log(ρ/ρ_mean)
-    # Robust fit using median binning
-    rho_bins = np.linspace(log_rho.min(), log_rho.max(), 30)
-    T_median = []
-    rho_centers = []
-
-    for i in range(len(rho_bins) - 1):
-        mask_bin = (log_rho >= rho_bins[i]) & (log_rho < rho_bins[i+1])
-        if np.sum(mask_bin) > 10:
-            T_median.append(np.median(log_T[mask_bin]))
-            rho_centers.append((rho_bins[i] + rho_bins[i+1]) / 2)
-
-    if len(rho_centers) > 5:
-        # Linear fit in log-log space
-        coeffs = np.polyfit(rho_centers, T_median, 1)
-        gamma_minus_1 = coeffs[0]
-        log_T0 = coeffs[1]
-
-        T0 = 10**log_T0
-        gamma = gamma_minus_1 + 1.0
-
-        # Estimate uncertainty
-        T_pred = np.polyval(coeffs, rho_centers)
-        residuals = np.array(T_median) - T_pred
-        gamma_err = np.std(
-            residuals) / np.std(rho_centers) if len(rho_centers) > 1 else np.nan
-    else:
-        T0 = np.nan
-        gamma = np.nan
-        gamma_err = np.nan
-
-    return {
-        'temperature': temp_filtered,
-        'density': overdensity,
-        'log_T': log_T,
-        'log_rho': log_rho,
-        'T0': float(T0) if np.isfinite(T0) else np.nan,
-        'gamma': float(gamma) if np.isfinite(gamma) else np.nan,
-        'gamma_err': float(gamma_err) if np.isfinite(gamma_err) else np.nan,
-        'n_pixels': len(temp_filtered),
-        'rho_mean': float(rho_mean)
-    }
+    return analysis_cpp.compute_temperature_density_relation(temperature, density, tau, min_tau)
 
 
 def compute_metal_line_statistics(tau, velocity_spacing, ion_name='Metal', threshold=0.05, colden=None):

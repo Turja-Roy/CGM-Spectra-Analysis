@@ -12,12 +12,11 @@ except:
     PCA = None
     TSNE = None
 
+from scripts import exploratory_cpp
+
 
 def extract_spectral_features(tau, velocity_spacing=0.1):
-    flux = np.exp(-tau)
-    n_sightlines, n_pixels = tau.shape
-    
-    features = {}
+    return exploratory_cpp.extract_spectral_features(tau, velocity_spacing)
     
     # Void sizes
     void_sizes = []
