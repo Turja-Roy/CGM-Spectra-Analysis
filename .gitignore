@@ -1,9 +1,26 @@
+# Python
 __pycache__/*
 *.pyc
-venv/
 .venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Data files
 *.hdf5
 *.hdf5.backup
-*.md
 spectra/
+
+# Notes and reading materials
+*.md
 Reading/
+
+# C++ build files
+src/cpp/build/
+src/cpp/.cache/
+scripts/*.so
+
+# Third-party
+third_party/
