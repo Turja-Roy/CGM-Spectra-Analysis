@@ -43,6 +43,7 @@ TemperatureDensityResult compute_temperature_density_relation(
         result.T0 = std::nan("");
         result.gamma = std::nan("");
         result.gamma_err = std::nan("");
+        result.rho_mean = std::nan("");
         return result;
     }
     
@@ -56,7 +57,8 @@ TemperatureDensityResult compute_temperature_density_relation(
     // Compute median manually
     std::vector<double> sorted_density = dens_dbl;
     std::sort(sorted_density.begin(), sorted_density.end());
-    float rho_mean = sorted_density[sorted_density.size() / 2];
+    double rho_mean = sorted_density[sorted_density.size() / 2];
+    result.rho_mean = rho_mean;
     Eigen::VectorXd overdensity = result.density / rho_mean;
     
     Eigen::VectorXd log_T(result.n_pixels);
@@ -110,6 +112,7 @@ TemperatureDensityResult compute_temperature_density_relation(
         result.T0 = std::nan("");
         result.gamma = std::nan("");
         result.gamma_err = std::nan("");
+        result.rho_mean = std::nan("");
     }
     
     return result;

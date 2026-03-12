@@ -14,6 +14,7 @@ struct TemperatureDensityResult {
     double T0;
     double gamma;
     double gamma_err;
+    double rho_mean;
     int n_pixels;
 };
 
