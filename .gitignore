@@ -23,4 +23,4 @@ src/cpp/.cache/
 scripts/*.so
 
 # Third-party
-third_party/
+# third_party/
