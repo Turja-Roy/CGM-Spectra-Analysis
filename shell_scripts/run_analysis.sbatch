@@ -6,7 +6,7 @@
 #SBATCH -N 1                       # Number of nodes
 #SBATCH -n 48                      # Number of tasks (cores) - for MPI or workers
 #SBATCH -t 48:00:00                # Time limit (48 hours for high-z)
-#SBATCH --mem=64                   # Memory per node (GB)
+#SBATCH --mem=64G                  # Memory per node (GB)
 #SBATCH --array=1-25               # Array job with 25 tasks (one per simulation)
 #SBATCH --mail-type=END,FAIL       # Email notifications (optional)
 #SBATCH --mail-user=$turja.roy@uta.edu  # Email address (update if needed)
@@ -17,17 +17,13 @@
 # This script processes 25 simulations in parallel as array tasks.
 # Supports both MPI (generate) and multiprocessing (analyze).
 #
-# Usage:
-#   With MPI for generate:    sbatch --constraint=haswell run_analysis.sbatch
-#   Sequential generate:       sbatch run_analysis.sbatch
-#
 # For generate: Uses fake_spectra MPI when --mpi flag is passed
 # For analyze: Uses --workers flag for parallel analysis
 # ====================================================================
 
 # Configuration
 USE_MPI=true           # Set to true for MPI parallelized generation
-NUM_WORKERS=12           # Number of parallel workers for analyze
+NUM_WORKERS=48           # Number of parallel workers for analyze
 N_SIGHTLINES=10000      # Number of sightlines to generate
 
 # Snapshot configuration
@@ -52,9 +48,11 @@ echo "Snapshot: snap_$SNAP_NUM"
 echo "Sightlines: ${SIGHTLINES_FILE:-random}"
 echo ""
 
-# Load modules (uncomment if needed on Lonestar6)
-# module load python3
-# module load hdf5
+# Load modules
+module load cmake
+module load gcc/12.2.0
+module load eigen/3.4.0
+module load fftw/3.3.10
 
 # Get simulation name from simulations.txt based on array task ID
 SIMULATION=$(sed -n "${SLURM_ARRAY_TASK_ID}p" simulations.txt)
@@ -91,7 +89,7 @@ if [ ! -f "$SNAPSHOT_PATH" ]; then
 fi
 
 # Activate virtual environment
-echo "[1/2] Activating virtual environment..."
+echo "[1/3] Activating virtual environment..."
 source .venv/bin/activate
 
 if [ $? -ne 0 ]; then
@@ -103,7 +101,7 @@ echo "Virtual environment activated"
 echo ""
 
 # Step 1: Generate spectra
-echo "[2/2] Generating spectra..."
+echo "[2/3] Generating spectra..."
 
 if [ "$USE_MPI" = true ]; then
     # MPI parallelized generation (use with mpirun)
@@ -114,13 +112,11 @@ if [ "$USE_MPI" = true ]; then
     srun -n $SLURM_NTASKS python analyze_spectra.py generate "$SNAPSHOT_PATH" \
         $SIGHTLINES_ARG \
         --mpi \
-        -n $N_SIGHTLINES
 else
     # Sequential generation
     echo "Command: python analyze_spectra.py generate '$SNAPSHOT_PATH' $SIGHTLINES_ARG -n $N_SIGHTLINES"
     python analyze_spectra.py generate "$SNAPSHOT_PATH" \
         $SIGHTLINES_ARG \
-        -n $N_SIGHTLINES
 fi
 
 if [ $? -ne 0 ]; then
@@ -134,7 +130,7 @@ echo "Spectra generation completed successfully"
 echo ""
 
 # Step 2: Analyze spectra with parallel workers
-echo "[3/2] Analyzing spectra with $NUM_WORKERS workers..."
+echo "[3/3] Analyzing spectra with $NUM_WORKERS workers..."
 echo "Command: python analyze_spectra.py analyze '$SPECTRA_PATH' --workers $NUM_WORKERS"
 echo ""
 
