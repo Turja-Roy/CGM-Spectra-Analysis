@@ -21,15 +21,29 @@ struct ColumnDensityResult {
     double redshift;
 };
 
+// New version with raw pointer for proper layout handling
 ColumnDensityResult compute_column_density_distribution(
     const Eigen::Ref<const Eigen::ArrayXXf>& tau,
     double velocity_spacing,
     float threshold = 0.5f,
-    const Eigen::Ref<const Eigen::ArrayXXf>* colden = nullptr,
+    const float* colden_data = nullptr,
+    int colden_rows = 0,
+    int colden_cols = 0,
     double redshift = std::nan(""),
     double box_size_ckpc_h = std::nan(""),
     double hubble = 0.6774,
     double omega_m = 0.3089);
+
+// Old version - deprecated
+ColumnDensityResult compute_column_density_distribution(
+    const Eigen::Ref<const Eigen::ArrayXXf>& tau,
+    double velocity_spacing,
+    float threshold,
+    const Eigen::Ref<const Eigen::ArrayXXf>* colden,
+    double redshift,
+    double box_size_ckpc_h,
+    double hubble,
+    double omega_m);
 
 }
 }

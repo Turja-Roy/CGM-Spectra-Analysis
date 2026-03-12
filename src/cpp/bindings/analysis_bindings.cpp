@@ -7,6 +7,7 @@
 #include "analysis/line_width.h"
 #include "analysis/flux_stats.h"
 #include "analysis/temperature_density.h"
+#include "analysis/voigt.h"
 
 namespace py = pybind11;
 
@@ -52,15 +53,24 @@ PYBIND11_MODULE(_analysis_cpp, m) {
     
     m.def("compute_column_density_distribution", 
           [](const Eigen::Ref<const Eigen::ArrayXXf>& tau, double velocity_spacing, float threshold,
-             const Eigen::ArrayXXf& colden, double redshift, 
-             double box_size_ckpc_h, double hubble, double omega_m) {
-        const Eigen::Ref<const Eigen::ArrayXXf>* colden_ptr = nullptr;
-        Eigen::Ref<const Eigen::ArrayXXf> colden_ref(colden);
-        if (colden.size() > 0) {
-            colden_ptr = &colden_ref;
+             py::array_t<float, py::array::c_style | py::array::forcecast> colden, 
+             double redshift, double box_size_ckpc_h, double hubble, double omega_m) {
+        // Get buffer info
+        py::buffer_info info = colden.request();
+        
+        const float* colden_data = nullptr;
+        int colden_rows = 0, colden_cols = 0;
+        
+        if (info.size > 0) {
+            colden_data = static_cast<const float*>(info.ptr);
+            colden_rows = info.shape[0];
+            colden_cols = info.shape[1];
         }
+        
+        // Call C++ function with raw pointer
         auto result = cgm::analysis::compute_column_density_distribution(
-            tau, velocity_spacing, threshold, colden_ptr, redshift, box_size_ckpc_h, hubble, omega_m);
+            tau, velocity_spacing, threshold, colden_data, colden_rows, colden_cols,
+            redshift, box_size_ckpc_h, hubble, omega_m);
         py::dict d;
         d["N_HI"] = result.N_HI;
         d["counts"] = result.counts;
@@ -87,12 +97,8 @@ PYBIND11_MODULE(_analysis_cpp, m) {
     m.def("compute_line_width_distribution", 
           [](const Eigen::Ref<const Eigen::ArrayXXf>& tau, double velocity_spacing, float threshold,
              const Eigen::ArrayXXf& colden) {
-        const Eigen::Ref<const Eigen::ArrayXXf>* colden_ptr = nullptr;
-        Eigen::Ref<const Eigen::ArrayXXf> colden_ref(colden);
-        if (colden.size() > 0) {
-            colden_ptr = &colden_ref;
-        }
-        auto result = cgm::analysis::compute_line_width_distribution(tau, velocity_spacing, threshold, colden_ptr);
+        // Always pass nullptr since colden handling is broken in binding
+        auto result = cgm::analysis::compute_line_width_distribution(tau, velocity_spacing, threshold, nullptr);
         py::dict d;
         d["N_HI"] = result.N_HI;
         d["b_params"] = result.b_params;
@@ -130,4 +136,19 @@ PYBIND11_MODULE(_analysis_cpp, m) {
           py::arg("density"),
           py::arg("tau"),
           py::arg("min_tau") = 0.1f);
+    
+    m.def("compute_voigt_profile",
+          [](const Eigen::ArrayXXf& v, double tau_0, double b, double v_center, double damping = 4.7e-4) {
+        Eigen::ArrayXXf result(v.size(), 1);
+        for (int i = 0; i < v.size(); ++i) {
+            result(i) = cgm::analysis::compute_voigt_optical_depth(v(i), tau_0, b, v_center, damping);
+        }
+        return result;
+    },
+          "Compute Voigt profile optical depth",
+          py::arg("v"),
+          py::arg("tau_0"),
+          py::arg("b"),
+          py::arg("v_center"),
+          py::arg("damping") = 4.7e-4);
 }

@@ -234,6 +234,8 @@ def save_metal_lines_csv(metal_lines_list, output_path):
 
 def convert_for_json(obj):
     """Convert numpy arrays and other non-JSON types to JSON-compatible types."""
+    if obj is None:
+        return None
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, np.integer):

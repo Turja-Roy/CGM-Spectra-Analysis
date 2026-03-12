@@ -8,11 +8,14 @@
 namespace cgm {
 namespace analysis {
 
+// Version with raw pointer - properly handles row-major numpy arrays
 ColumnDensityResult compute_column_density_distribution(
     const Eigen::Ref<const Eigen::ArrayXXf>& tau,
     double velocity_spacing,
     float threshold,
-    const Eigen::Ref<const Eigen::ArrayXXf>* colden,
+    const float* colden_data,
+    int colden_rows,
+    int colden_cols,
     double redshift,
     double box_size_ckpc_h,
     double hubble,
@@ -21,14 +24,17 @@ ColumnDensityResult compute_column_density_distribution(
     const int n_sightlines = tau.rows();
     const int n_pixels = tau.cols();
     
+    // Check if colden is valid and matches expected dimensions
+    const bool has_colden = (colden_data != nullptr && colden_rows == n_sightlines && colden_cols == n_pixels);
+    
     std::vector<double> column_densities;
     column_densities.reserve(n_sightlines * 10);
     
     for (int i = 0; i < n_sightlines; ++i) {
         const auto& tau_line = tau.row(i);
         const float* colden_line = nullptr;
-        if (colden) {
-            colden_line = colden->row(i).data();
+        if (has_colden) {
+            colden_line = &colden_data[i * n_pixels];  // Row-major access from Python
         }
         
         bool in_feature = false;
@@ -98,10 +104,10 @@ ColumnDensityResult compute_column_density_distribution(
     
     if (column_densities.empty()) {
         result.N_HI = Eigen::VectorXd(0);
-        result.counts = Eigen::VectorXi::Zero(49);
-        result.bins = Eigen::VectorXd::LinSpaced(50, 1e12, 1e22);
-        result.bin_centers = Eigen::VectorXd::Zero(49);
-        result.f_N = Eigen::VectorXd::Zero(49);
+        result.counts = Eigen::VectorXi::Zero(50);
+        result.bins = Eigen::VectorXd::LinSpaced(51, 1e12, 1e22);
+        result.bin_centers = Eigen::VectorXd::Zero(50);
+        result.f_N = Eigen::VectorXd::Zero(50);
         result.beta_fit = std::nan("");
         result.n_absorbers = 0;
         return result;
@@ -110,7 +116,7 @@ ColumnDensityResult compute_column_density_distribution(
     result.N_HI = Eigen::VectorXd::Map(column_densities.data(), column_densities.size());
     result.n_absorbers = column_densities.size();
     
-    const int n_bins = 49;
+    const int n_bins = 50;
     const double log_N_min = 12.0;
     const double log_N_max = 22.0;
     
@@ -144,8 +150,6 @@ ColumnDensityResult compute_column_density_distribution(
     result.f_N = f_N;
     
     // Fit power law: f(N) = A * N^(-beta) in range 12 < log(N) < 14.5
-    // In log-log space: log(f) = log(A) - beta * log(N)
-    // Linear fit: y = intercept + slope * x, where slope = -beta
     double beta_fit = std::nan("");
     
     std::vector<double> log_N_fit;
@@ -163,7 +167,6 @@ ColumnDensityResult compute_column_density_distribution(
     }
     
     if (log_N_fit.size() > 5) {
-        // Least squares linear fit
         double sum_x = 0, sum_y = 0, sum_xy = 0, sum_xx = 0;
         int n = log_N_fit.size();
         for (int i = 0; i < n; ++i) {
@@ -176,7 +179,7 @@ ColumnDensityResult compute_column_density_distribution(
         double denominator = n * sum_xx - sum_x * sum_x;
         if (std::abs(denominator) > 1e-10) {
             double slope = (n * sum_xy - sum_x * sum_y) / denominator;
-            beta_fit = -slope;  // f(N) ∝ N^(-beta), so beta = -slope
+            beta_fit = -slope;
         }
     }
     
