@@ -1,40 +1,161 @@
 #include "line_width.h"
 #include "constants.h"
+#include "voigt.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <limits>
 
 namespace cgm {
 namespace analysis {
 
-// ============================================================================
-// Line Width Distribution (Fallback Implementation)
-// ============================================================================
-//
-// This C++ implementation provides a fast fallback for line width estimation
-// when fake_spectra.voigtfit is not available. It uses:
-//
-// 1. Peak detection in optical depth profiles
-// 2. FWHM-based Doppler parameter estimation (Gaussian approximation)
-//
-// For accurate Voigt profile fitting, use fake_spectra.voigtfit in Python,
-// which provides exact Faddeeva function evaluation via scipy.special.wofz().
-//
-// The relationship between FWHM and Doppler parameter b for a Gaussian is:
-//   FWHM = 2 * sqrt(ln(2)) * b ≈ 1.665 * b
-//   => b ≈ FWHM / 1.665
-//
-// For Voigt profiles, the FWHM depends on both Doppler and damping widths,
-// but for typical IGM conditions (damping parameter a ~ 4.7e-4 << 1),
-// the Gaussian approximation is reasonable for initial estimates.
-// ============================================================================
+namespace internal {
 
-// Estimate b-parameter from FWHM using Gaussian approximation
-// FWHM = 2 * sqrt(ln(2)) * b => b = FWHM / (2 * sqrt(ln(2)))
-static float estimate_b_from_fwhm(float fwhm) {
-    // 2 * sqrt(ln(2)) ≈ 1.6651
-    constexpr float FWHM_TO_B = 1.0f / 1.6651f;
-    return fwhm * FWHM_TO_B;
+inline double voigt_model(double v, double tau_0, double b, double v_center, double damping) {
+    return compute_voigt_optical_depth(v, tau_0, b, v_center, damping);
+}
+
+struct FitParams {
+    double tau_0;
+    double b;
+    double v_center;
+};
+
+double compute_residual(
+    const FitParams& params,
+    const double* tau_data,
+    const double* v_values,
+    int n_points,
+    double damping) {
+    
+    if (params.b <= 0.1 || params.b > 200.0 || params.tau_0 <= 0) {
+        return 1e10;
+    }
+    
+    double residual = 0.0;
+    for (int i = 0; i < n_points; ++i) {
+        double tau_model = voigt_model(v_values[i], params.tau_0, params.b, params.v_center, damping);
+        double diff = tau_data[i] - tau_model;
+        residual += diff * diff;
+    }
+    
+    return residual / n_points;
+}
+
+bool fit_voigt_profile(
+    const double* tau_data,
+    const double* v_values,
+    int n_points,
+    double tau_peak,
+    double v_peak,
+    double fwhm,
+    double damping,
+    FitParams& result) {
+    
+    if (n_points < 10) return false;
+    
+    double b_guess = fwhm / (2.0 * std::sqrt(std::log(2.0)));
+    b_guess = std::clamp(b_guess, 5.0, 80.0);
+    
+    double best_error = 1e20;
+    double best_b = b_guess;
+    double best_tau_0 = tau_peak;
+    double best_v = v_peak;
+    
+    double a = damping * 1215.67 / b_guess;
+    double a_scaled = a * 2.0 * SQRT_LN2;
+    double voigt_at_center = cgm::analysis::internal::voigt(0.0, a_scaled);
+    double V_0 = voigt_at_center * (2.0 * SQRT_LN2) / b_guess;
+    double tau_0_guess = tau_peak / V_0;
+    
+    for (double b_test = 5.0; b_test <= 80.0; b_test += 2.0) {
+        double a_test = damping * 1215.67 / b_test;
+        double a_scaled_test = a_test * 2.0 * SQRT_LN2;
+        
+        double V_0_test = 0.0;
+        for (int i = 0; i < n_points; ++i) {
+            double u = (v_values[i] - v_peak) / b_test;
+            double voigt_val = cgm::analysis::internal::voigt(u, a_scaled_test);
+            V_0_test = std::max(V_0_test, voigt_val * (2.0 * SQRT_LN2) / b_test);
+        }
+        
+        double tau_0_test = tau_peak / V_0_test;
+        
+        FitParams params = {tau_0_test, b_test, v_peak};
+        double err = compute_residual(params, tau_data, v_values, n_points, damping);
+        
+        if (err < best_error) {
+            best_error = err;
+            best_b = b_test;
+            best_tau_0 = tau_0_test;
+        }
+    }
+    
+    FitParams params = {best_tau_0, best_b, best_v};
+    
+    const int max_iter = 30;
+    const double eps = 1e-6;
+    
+    double current_error = compute_residual(params, tau_data, v_values, n_points, damping);
+    
+    for (int iter = 0; iter < max_iter; ++iter) {
+        double h_tau = 0.1 * std::max(params.tau_0, 0.1);
+        double h_b = 0.1 * std::max(params.b, 1.0);
+        double h_v = 0.5;
+        
+        double r0 = current_error;
+        
+        double r_tau = compute_residual({params.tau_0 + h_tau, params.b, params.v_center}, 
+                                        tau_data, v_values, n_points, damping);
+        double r_b = compute_residual({params.tau_0, params.b + h_b, params.v_center}, 
+                                      tau_data, v_values, n_points, damping);
+        double r_v = compute_residual({params.tau_0, params.b, params.v_center + h_v}, 
+                                      tau_data, v_values, n_points, damping);
+        
+        if (r_tau >= 1e9 || r_b >= 1e9 || r_v >= 1e9) break;
+        
+        double grad_tau = (r_tau - r0) / h_tau;
+        double grad_b = (r_b - r0) / h_b;
+        double grad_v = (r_v - r0) / h_v;
+        
+        double alpha = 1.0;
+        FitParams params_new = params;
+        
+        for (int ls = 0; ls < 20; ++ls) {
+            params_new.tau_0 = std::max(params.tau_0 - alpha * grad_tau * params.tau_0, 0.01);
+            params_new.b = std::clamp(params.b - alpha * grad_b * params.b * 0.1, 2.0, 80.0);
+            params_new.v_center = params.v_center - alpha * grad_v;
+            
+            double new_error = compute_residual(params_new, tau_data, v_values, n_points, damping);
+            
+            if (new_error < r0) {
+                params = params_new;
+                current_error = new_error;
+                break;
+            }
+            alpha *= 0.5;
+        }
+        
+        if (alpha < 1e-6) break;
+        
+        if (current_error < eps) break;
+    }
+    
+    double final_error = compute_residual(params, tau_data, v_values, n_points, damping);
+    
+    if (final_error > 0.1 || params.b < 2.0 || params.b > 80.0 || params.tau_0 < 0.01) {
+        return false;
+    }
+    
+    result = params;
+    return true;
+}
+
+double estimate_b_from_fwhm(double fwhm) {
+    if (fwhm < 1.0) return 10.0;
+    return std::clamp(fwhm / (2.0 * std::sqrt(std::log(2.0))), 2.0, 80.0);
+}
+
 }
 
 LineWidthResult compute_line_width_distribution(
@@ -46,104 +167,136 @@ LineWidthResult compute_line_width_distribution(
     const int n_sightlines = tau.rows();
     const int n_pixels = tau.cols();
     
+    const double damping = VOIGT_DAMPING;
+    
     std::vector<double> column_densities;
     std::vector<double> b_params;
     column_densities.reserve(n_sightlines * 10);
     b_params.reserve(n_sightlines * 10);
     
+    std::vector<double> tau_buffer(n_pixels);
+    std::vector<double> v_buffer(n_pixels);
+    for (int j = 0; j < n_pixels; ++j) {
+        v_buffer[j] = j * velocity_spacing;
+    }
+    
     for (int i = 0; i < n_sightlines; ++i) {
-        // Use Eigen's row access directly (handles storage order correctly)
-        auto tau_row = tau.row(i);
+        const auto& tau_line = tau.row(i);
+        const float* colden_line = nullptr;
+        if (colden) {
+            colden_line = colden->row(i).data();
+        }
         
-        // Find peaks in optical depth (simple local maximum detection)
-        std::vector<int> peaks;
-        for (int j = 1; j < n_pixels - 1; ++j) {
-            if (tau_row(j) > threshold && 
-                tau_row(j) > tau_row(j-1) && 
-                tau_row(j) > tau_row(j+1)) {
-                peaks.push_back(j);
+        std::vector<int> peak_indices;
+        std::vector<double> peak_values;
+        
+        for (int j = 2; j < n_pixels - 2; ++j) {
+            if (tau_line(j) > threshold && 
+                tau_line(j) >= tau_line(j-1) && 
+                tau_line(j) >= tau_line(j-2) &&
+                tau_line(j) >= tau_line(j+1) && 
+                tau_line(j) >= tau_line(j+2)) {
+                peak_indices.push_back(j);
+                peak_values.push_back(tau_line(j));
             }
         }
         
-        for (int peak_idx : peaks) {
-            float tau_peak = tau_row(peak_idx);
+        if (peak_indices.empty()) continue;
+        
+        std::vector<int> merged_peaks;
+        std::vector<double> merged_values;
+        int min_separation = 20;
+        
+        merged_peaks.push_back(peak_indices[0]);
+        merged_values.push_back(peak_values[0]);
+        
+        for (size_t k = 1; k < peak_indices.size(); ++k) {
+            if (peak_indices[k] - merged_peaks.back() < min_separation) {
+                if (peak_values[k] > merged_values.back()) {
+                    merged_peaks.back() = peak_indices[k];
+                    merged_values.back() = peak_values[k];
+                }
+            } else {
+                merged_peaks.push_back(peak_indices[k]);
+                merged_values.push_back(peak_values[k]);
+            }
+        }
+        
+        peak_indices = merged_peaks;
+        peak_values = merged_values;
+        
+        for (size_t pi = 0; pi < peak_indices.size(); ++pi) {
+            int peak_idx = peak_indices[pi];
+            double tau_peak = peak_values[pi];
             
-            // Define feature extent (where tau drops below 30% of threshold)
             int left = peak_idx;
-            while (left > 0 && tau_row(left) > threshold * 0.3f) {
+            while (left > 0 && tau_line(left) > threshold * 0.5) {
                 --left;
             }
             
             int right = peak_idx;
-            while (right < n_pixels - 1 && tau_row(right) > threshold * 0.3f) {
+            while (right < n_pixels - 1 && tau_line(right) > threshold * 0.5) {
                 ++right;
             }
             
-            // Need at least 3 pixels for meaningful measurement
-            if (right - left < 3) continue;
+            int feature_width = right - left + 1;
+            if (feature_width < 5) continue;
             
-            // Compute FWHM by finding half-maximum crossings
-            float half_max = tau_peak * 0.5f;
+            double v_peak = peak_idx * velocity_spacing;
+            double fwhm = feature_width * velocity_spacing;
             
-            // Find left half-max crossing
-            float v_left = 0.0f;
-            for (int k = peak_idx; k >= 1; --k) {
-                if (tau_row(k) >= half_max && tau_row(k-1) < half_max) {
-                    float t = (half_max - tau_row(k-1)) / (tau_row(k) - tau_row(k-1));
-                    v_left = (k - 1 + t) * velocity_spacing;
-                    break;
+            internal::FitParams fit_result;
+            bool fit_success = false;
+            
+            if (feature_width >= 10) {
+                int n_feature = right - left + 1;
+                for (int k = 0; k < n_feature; ++k) {
+                    tau_buffer[k] = tau_line(left + k);
                 }
+                
+                fit_success = internal::fit_voigt_profile(
+                    tau_buffer.data(),
+                    v_buffer.data(),
+                    n_feature,
+                    tau_peak,
+                    v_peak,
+                    fwhm,
+                    damping,
+                    fit_result
+                );
             }
             
-            // Find right half-max crossing
-            float v_right = (n_pixels - 1) * velocity_spacing;
-            for (int k = peak_idx; k < n_pixels - 1; ++k) {
-                if (tau_row(k) >= half_max && tau_row(k+1) < half_max) {
-                    float t = (half_max - tau_row(k)) / (tau_row(k+1) - tau_row(k));
-                    v_right = (k + t) * velocity_spacing;
-                    break;
-                }
+            double b;
+            if (fit_success) {
+                b = fit_result.b;
+            } else {
+                b = internal::estimate_b_from_fwhm(fwhm);
             }
             
-            float fwhm = v_right - v_left;
-            if (fwhm <= 0.0f) {
-                fwhm = velocity_spacing * 3.0f;  // Minimum 3 pixels
-            }
+            b = std::clamp(b, 2.0, 80.0);
             
-            float b = estimate_b_from_fwhm(fwhm);
-            
-            // Clamp to physical range (2-80 km/s typical for IGM)
-            b = std::clamp(b, 2.0f, 80.0f);
-            
-            // Compute column density
             double N_HI;
-            if (colden && colden->rows() > 0) {
-                // Use provided column density (max over feature)
-                auto colden_row = colden->row(i);
+            if (colden_line) {
                 float max_colden = 0;
                 for (int k = left; k <= right; ++k) {
-                    max_colden = std::max(max_colden, colden_row(k));
+                    max_colden = std::max(max_colden, colden_line[k]);
                 }
                 N_HI = max_colden;
             } else {
-                // Estimate from integrated optical depth
-                // N_HI ≈ (m_e c / π e² f λ) ∫ τ dv
                 double tau_sum = 0;
                 for (int k = left; k <= right; ++k) {
-                    tau_sum += tau_row(k);
+                    tau_sum += tau_line(k);
                 }
                 N_HI = constants::TAU_TO_COLDEN_CONSTANT * tau_sum * velocity_spacing;
             }
             
-            // Filter to physical range
-            if (N_HI > constants::COLUMN_DENSITY_MIN && b > 2.0 && b < 80.0) {
+            if (N_HI > constants::COLUMN_DENSITY_MIN) {
                 column_densities.push_back(N_HI);
                 b_params.push_back(b);
             }
         }
     }
     
-    // Build result structure
     LineWidthResult result;
     if (b_params.empty()) {
         result.N_HI = Eigen::VectorXd(0);
@@ -158,13 +311,9 @@ LineWidthResult compute_line_width_distribution(
     
     result.N_HI = Eigen::VectorXd::Map(column_densities.data(), column_densities.size());
     result.b_params = Eigen::VectorXd::Map(b_params.data(), b_params.size());
-    
-    // T = (m_H / 2 k_B) * b² where b is in km/s
-    // Factor ≈ 60.57 K/(km/s)²
     result.temperatures = result.b_params.array().square() * constants::B_TO_T_FACTOR;
     result.n_absorbers = b_params.size();
     
-    // Compute statistics
     Eigen::VectorXd sorted_b = result.b_params;
     std::sort(sorted_b.data(), sorted_b.data() + sorted_b.size());
     result.b_median = sorted_b(sorted_b.size() / 2);

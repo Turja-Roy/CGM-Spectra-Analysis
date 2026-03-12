@@ -2,6 +2,7 @@
 #define CGM_ANALYSIS_LINE_WIDTH_H
 
 #include <Eigen/Dense>
+#include "voigt.h"
 
 namespace cgm {
 namespace analysis {
