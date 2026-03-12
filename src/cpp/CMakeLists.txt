@@ -23,12 +23,16 @@ set_target_properties(Eigen3::Eigen PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${EIGEN3_INCLUDE_DIR}"
 )
 
-option(USE_FFTW "Use FFTW for FFT (faster)" OFF)
+option(USE_FFTW "Use FFTW for FFT (faster)" ON)
 
-if(USE_FFTW)
-    find_package(FFTW3F REQUIRED)
-else()
-    message(STATUS "FFTW disabled - using simple DFT implementation")
+# Find FFTW3f (single precision)
+find_package(FFTW3f QUIET)
+if(NOT FFTW3f_FOUND)
+    find_library(FFTW3F_LIBRARY NAMES fftw3f PATHS /usr/lib NO_DEFAULT_PATH)
+    if(FFTW3F_LIBRARY)
+        set(FFTW3f_FOUND TRUE)
+        set(FFTW3f_LIBRARIES ${FFTW3F_LIBRARY})
+    endif()
 endif()
 
 message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER}")
@@ -43,3 +47,7 @@ add_subdirectory(cgm)
 add_subdirectory(bindings)
 
 message(STATUS "Build configuration: ${CMAKE_BUILD_TYPE}")
+
+install(TARGETS _analysis_cpp _exploratory_cpp _cgm_cpp
+        LIBRARY DESTINATION .
+        ARCHIVE DESTINATION .)
