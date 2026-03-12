@@ -150,6 +150,10 @@ def cmd_analyze(args):
             hubble = header.get('hubble', header.get('HubbleParam', 0.6774))
             omega_m = header.get('omegam', header.get('Omega0', 0.3089))
 
+            velocity_spacing = None
+            if 'dvbin' in header:
+                velocity_spacing = float(header['dvbin'])
+
     n_sightlines, n_pixels = tau.shape
     
     # Subsample if requested to reduce memory usage
@@ -189,30 +193,34 @@ def cmd_analyze(args):
     # Load or compute velocity spacing from header
     n_sightlines, n_pixels = tau.shape
     
-    try:
-        # Try to load dvbin directly (new files)
-        if 'dvbin' in f['Header'].attrs:
-            velocity_spacing = float(f['Header'].attrs['dvbin'])
-            print(f"Loaded velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
-        else:
-            # Compute from header attributes (backward compatible)
-            header = f['Header'].attrs
-            nbins = header['nbins']
-            box = header['box']  # ckpc/h
-            Hz = header['Hz']    # km/s/Mpc
-            hubble = header['hubble']  # h parameter
-            
-            # Compute vmax: convert box to cMpc/h, then to velocity
-            vmax = (box / 1000.0) * Hz / hubble  # km/s
-            
-            # Compute velocity spacing
-            velocity_spacing = 2.0 * vmax / nbins
-            print(f"Computed velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
-            print(f"  (vmax={vmax:.2f} km/s, nbins={nbins})")
-    except Exception as e:
-        print(f"Warning: Could not load/compute velocity spacing: {e}")
-        print(f"Falling back to default: 0.1 km/s/pixel (may be inaccurate!)")
-        velocity_spacing = 0.1  # km/s, fallback
+    # If velocity_spacing not set from header, try to load/compute it
+    if velocity_spacing is None:
+        try:
+            if 'dvbin' in f['Header'].attrs:
+                velocity_spacing = float(f['Header'].attrs['dvbin'])
+                print(f"Loaded velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
+            else:
+                # Compute from header attributes (backward compatible)
+                header = f['Header'].attrs
+                nbins = header['nbins']
+                box = header['box']  # ckpc/h
+                Hz = header['Hz']    # km/s/Mpc
+                hubble = header['hubble']  # h parameter
+                
+                # Compute vmax: convert box to cMpc/h, then to velocity
+                vmax = (box / 1000.0) * Hz / hubble  # km/s
+                
+                # Compute velocity spacing
+                velocity_spacing = 2.0 * vmax / nbins
+                print(f"Computed velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
+                print(f"  (vmax={vmax:.2f} km/s, nbins={nbins})")
+        except Exception as e:
+            print(f"Warning: Could not load/compute velocity spacing: {e}")
+            print(f"Falling back to default: 0.1 km/s/pixel (may be inaccurate!)")
+            velocity_spacing = 0.1  # km/s, fallback
+    else:
+        # velocity_spacing already set from header earlier
+        print(f"Using velocity spacing from header: {velocity_spacing:.4f} km/s/pixel")
     
     velocity = np.arange(n_pixels) * velocity_spacing
 
