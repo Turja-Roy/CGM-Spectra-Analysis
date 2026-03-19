@@ -13,6 +13,7 @@ from scripts.analysis import (
     compute_column_density_distribution,
     compute_line_width_distribution,
     compute_temperature_density_relation,
+    compute_temperature_density_chunked,
     compute_metal_line_statistics,
     format_stats_table,
 )
@@ -384,53 +385,52 @@ def cmd_analyze(args):
             print("\n[4b/8] Skipping line width distribution (--skip-line-width)")
 
     # [4c/8] Temperature-density relation (if data available)
-    print("\n[4c/8] Checking for temperature-density data...")
-    tdens_dict = None
-    try:
-        with h5py.File(spectra_file, 'r') as f:
-            # Get element and ion from tau_path (e.g., 'tau/H/1/1215')
-            if '/' in tau_path:
-                parts = tau_path.split('/')
-                if len(parts) >= 3:
-                    temp_elem = parts[1]  # 'H'
-                    temp_ion = parts[2]   # '1'
-                else:
-                    temp_elem = 'H'
-                    temp_ion = '1'
-            else:
+    skip_tdens = getattr(args, 'skip_temp_density', False)
+    if skip_tdens:
+        print("\n[4c/8] Skipping temperature-density relation (--skip-temp-density)")
+        tdens_dict = None
+    else:
+        print("\n[4c/8] Checking for temperature-density data...")
+        tdens_dict = None
+        try:
+            with h5py.File(spectra_file, 'r') as f:
                 temp_elem = 'H'
                 temp_ion = '1'
+                if '/' in tau_path:
+                    parts = tau_path.split('/')
+                    if len(parts) >= 3:
+                        temp_elem = parts[1]
+                        temp_ion = parts[2]
 
-            # Check if temperature and density data exist
-            has_temp = ('temperature' in f and
-                        temp_elem in f['temperature'] and
-                        temp_ion in f['temperature'][temp_elem])
-            has_dens = ('density_weight_density' in f and
-                        temp_elem in f['density_weight_density'] and
-                        temp_ion in f['density_weight_density'][temp_elem])
+                has_temp = ('temperature' in f and
+                            temp_elem in f['temperature'] and
+                            temp_ion in f['temperature'][temp_elem])
+                has_dens = ('density_weight_density' in f and
+                            temp_elem in f['density_weight_density'] and
+                            temp_ion in f['density_weight_density'][temp_elem])
 
-            if has_temp and has_dens:
-                print("Found temperature and density data - computing T-ρ relation...")
-                temperature = f['temperature'][temp_elem][temp_ion][:]
-                density = f['density_weight_density'][temp_elem][temp_ion][:]
+                if has_temp and has_dens:
+                    print("Found temperature and density data - using chunked processing...")
+                    tdens_dict = compute_temperature_density_chunked(
+                        spectra_file, tau_path, min_tau=0.1, chunk_size=1000
+                    )
 
-                tdens_dict = compute_temperature_density_relation(
-                    temperature, density, tau, min_tau=0.1
-                )
-
-                print(f"Valid pixels: {tdens_dict['n_pixels']:,}")
-                if np.isfinite(tdens_dict['T0']):
-                    print(f"T_0 (at mean density): {tdens_dict['T0']:.0f} K")
-                    print(f"gamma (polytropic index): {tdens_dict['gamma']:.3f} ± {
-                          tdens_dict['gamma_err']:.3f}")
+                    if 'error' in tdens_dict:
+                        print(f"  Error: {tdens_dict['error']}")
+                        tdens_dict = None
+                    else:
+                        print(f"  Valid pixels: {tdens_dict['n_pixels']:,}")
+                        if np.isfinite(tdens_dict['T0']):
+                            print(f"  T_0 (at mean density): {tdens_dict['T0']:.0f} K")
+                            print(f"  gamma (polytropic index): {tdens_dict['gamma']:.3f}")
+                        else:
+                            print(f"  Warning: T-ρ fit failed")
                 else:
-                    print(f"Warning: T-ρ fit failed")
-            else:
-                print("Temperature/density data not available")
-                print("(Regenerate spectra to include T-ρ analysis)")
-    except Exception as e:
-        print(f"Warning: Could not load temperature-density data: {e}")
-        tdens_dict = None
+                    print("Temperature/density data not available")
+                    print("(Regenerate spectra to include T-ρ analysis)")
+        except Exception as e:
+            print(f"Warning: Could not load temperature-density data: {e}")
+            tdens_dict = None
 
     # [4d/8] Multi-line analysis (if multiple lines available)
     print("\n[4d/8] Checking for multi-line data...")

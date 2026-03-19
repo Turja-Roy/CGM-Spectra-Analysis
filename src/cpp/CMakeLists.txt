@@ -23,7 +23,7 @@ set_target_properties(Eigen3::Eigen PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${EIGEN3_INCLUDE_DIR}"
 )
 
-option(USE_FFTW "Use FFTW for FFT (faster)" ON)
+option(USE_FFTW "Use FFTW for FFT (faster)" OFF)
 
 # Find FFTW3f (single precision)
 find_package(FFTW3f QUIET)
@@ -33,6 +33,13 @@ if(NOT FFTW3f_FOUND)
         set(FFTW3f_FOUND TRUE)
         set(FFTW3f_LIBRARIES ${FFTW3F_LIBRARY})
     endif()
+endif()
+
+if(FFTW3f_FOUND AND USE_FFTW)
+    message(STATUS "FFTW3f found, using FFTW for power spectrum")
+else()
+    message(STATUS "FFTW3f not found or USE_FFTW=OFF, using simple DFT fallback")
+    set(USE_FFTW OFF)
 endif()
 
 message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER}")

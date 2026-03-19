@@ -151,4 +151,25 @@ PYBIND11_MODULE(_analysis_cpp, m) {
           py::arg("b"),
           py::arg("v_center"),
           py::arg("damping") = 4.7e-4);
+    
+    m.def("compute_tdens_binned",
+          [](const Eigen::Ref<const Eigen::VectorXd>& temperature,
+             const Eigen::Ref<const Eigen::VectorXd>& density,
+             int n_bins) {
+        auto result = cgm::analysis::compute_tdens_binned(temperature, density, n_bins);
+        py::dict d;
+        d["T_median"] = result.T_median;
+        d["rho_centers"] = result.rho_centers;
+        d["counts_per_bin"] = result.counts_per_bin;
+        d["T0"] = result.T0;
+        d["gamma"] = result.gamma;
+        d["rho_mean"] = result.rho_mean;
+        d["n_pixels"] = result.n_pixels;
+        d["n_bins"] = result.n_bins;
+        return d;
+    },
+          "Compute binned temperature-density statistics (memory-efficient)",
+          py::arg("temperature"),
+          py::arg("density"),
+          py::arg("n_bins") = 30);
 }

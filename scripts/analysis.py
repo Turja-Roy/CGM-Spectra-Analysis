@@ -391,3 +391,131 @@ def _fit_single_absorber(flux, wavelength, absorber, redshift, continuum_window,
     except Exception as e:
         print(f"VoigtFit error: {e}")
         return None
+
+
+def compute_tdens_binned(temperature, density, n_bins=30):
+    """Compute binned temperature-density statistics (memory-efficient).
+    
+    Args:
+        temperature: 1D array of temperature values (filtered)
+        density: 1D array of density values (filtered, same size)
+        n_bins: Number of density bins (default 30)
+    
+    Returns:
+        dict with T0, gamma, rho_mean, n_pixels, T_median, rho_centers, counts_per_bin
+    """
+    return analysis_cpp.compute_tdens_binned(temperature, density, n_bins)
+
+
+def compute_temperature_density_chunked(
+    spectra_file,
+    tau_path,
+    min_tau=0.1,
+    chunk_size=1000,
+    n_bins=30,
+    verbose=True
+):
+    """Compute temperature-density relation in chunks to limit memory.
+    
+    Streams through HDF5 datasets in chunks, filters valid pixels (tau > min_tau,
+    valid temperature and density), and computes binned statistics.
+    
+    Args:
+        spectra_file: Path to HDF5 spectra file
+        tau_path: Path to tau dataset (e.g., 'tau/H/1/1215')
+        min_tau: Minimum optical depth for filtering (default 0.1)
+        chunk_size: Number of sightlines per chunk (default 1000)
+        n_bins: Number of density bins for T-ρ relation (default 30)
+        verbose: Print progress messages (default True)
+    
+    Returns:
+        dict with T0, gamma, rho_mean, n_pixels, T_median, rho_centers, counts_per_bin
+    """
+    import h5py
+    
+    temp_elem = 'H'
+    temp_ion = '1'
+    if '/' in tau_path:
+        parts = tau_path.split('/')
+        if len(parts) >= 3:
+            temp_elem = parts[1]
+            temp_ion = parts[2]
+    
+    with h5py.File(spectra_file, 'r') as f:
+        tau_shape = f[tau_path].shape
+        n_sightlines = tau_shape[0]
+        n_pixels = tau_shape[1]
+    
+    if verbose:
+        print(f"Processing T-ρ data: {n_sightlines:,} sightlines × {n_pixels:,} pixels")
+        print(f"Using chunk size: {chunk_size}")
+    
+    temp_filtered = []
+    dens_filtered = []
+    
+    n_chunks = (n_sightlines + chunk_size - 1) // chunk_size
+    
+    with h5py.File(spectra_file, 'r') as f:
+        temp_path = f'temperature/{temp_elem}/{temp_ion}'
+        dens_path = f'density_weight_density/{temp_elem}/{temp_ion}'
+        
+        if temp_path not in f or dens_path not in f:
+            return {'error': 'Temperature or density data not found'}
+        
+        for chunk_idx in range(n_chunks):
+            start_idx = chunk_idx * chunk_size
+            end_idx = min(start_idx + chunk_size, n_sightlines)
+            
+            if verbose and chunk_idx % 10 == 0:
+                print(f"  Processing chunk {chunk_idx + 1}/{n_chunks} ({start_idx:,}-{end_idx:,})")
+            
+            tau_chunk = f[tau_path][start_idx:end_idx]
+            temp_chunk = f[temp_path][start_idx:end_idx]
+            dens_chunk = f[dens_path][start_idx:end_idx]
+            
+            tau_flat = tau_chunk.ravel()
+            temp_flat = temp_chunk.ravel()
+            dens_flat = dens_chunk.ravel()
+            
+            mask = (
+                (tau_flat > min_tau) &
+                (temp_flat > 0) & np.isfinite(temp_flat) &
+                (dens_flat > 0) & np.isfinite(dens_flat)
+            )
+            
+            if np.any(mask):
+                temp_filtered.append(temp_flat[mask].astype(np.float64))
+                dens_filtered.append(dens_flat[mask].astype(np.float64))
+    
+    if len(temp_filtered) == 0:
+        return {
+            'T0': float('nan'),
+            'gamma': float('nan'),
+            'rho_mean': float('nan'),
+            'n_pixels': 0,
+            'T_median': np.array([]),
+            'rho_centers': np.array([]),
+            'counts_per_bin': np.array([]),
+            'n_bins': n_bins
+        }
+    
+    temperature = np.concatenate(temp_filtered)
+    density = np.concatenate(dens_filtered)
+    
+    if verbose:
+        print(f"  Total valid pixels: {len(temperature):,}")
+    
+    del temp_filtered, dens_filtered
+    
+    result = compute_tdens_binned(temperature, density, n_bins)
+    
+    return {
+        'T0': result['T0'],
+        'gamma': result['gamma'],
+        'rho_mean': result['rho_mean'],
+        'n_pixels': result['n_pixels'],
+        'T_median': np.array(result['T_median']),
+        'rho_centers': np.array(result['rho_centers']),
+        'counts_per_bin': np.array(result['counts_per_bin']),
+        'n_bins': result['n_bins']
+    }

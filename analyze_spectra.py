@@ -130,6 +130,8 @@ Documentation:
                                 help='Skip column density distribution computation')
     parser_analyze.add_argument('--skip-line-width', action='store_true',
                                 help='Skip line width distribution computation')
+    parser_analyze.add_argument('--skip-temp-density', action='store_true',
+                                help='Skip temperature-density relation computation')
     parser_analyze.set_defaults(func=cmd_analyze)
 
     parser_compare = subparsers.add_parser('compare',
