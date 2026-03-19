@@ -124,6 +124,12 @@ Documentation:
                                 help='Maximum number of sightlines to analyze (for memory-limited systems)')
     parser_analyze.add_argument('--workers', type=int, default=1,
                                 help='Number of parallel workers for analysis (default: 1, use 4-8 for parallel)')
+    parser_analyze.add_argument('--skip-power-spectrum', action='store_true',
+                                help='Skip power spectrum computation')
+    parser_analyze.add_argument('--skip-cddf', action='store_true',
+                                help='Skip column density distribution computation')
+    parser_analyze.add_argument('--skip-line-width', action='store_true',
+                                help='Skip line width distribution computation')
     parser_analyze.set_defaults(func=cmd_analyze)
 
     parser_compare = subparsers.add_parser('compare',
