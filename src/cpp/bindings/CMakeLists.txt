@@ -14,6 +14,11 @@ target_link_libraries(_analysis_cpp PRIVATE
     OpenMP::OpenMP_CXX
 )
 
+# Link FFTW if available (needed for power spectrum computation)
+if(FFTW3F_LIBRARIES)
+    target_link_libraries(_analysis_cpp PRIVATE ${FFTW3F_LIBRARIES})
+endif()
+
 # Exploratory module
 pybind11_add_module(_exploratory_cpp
     exploratory_bindings.cpp

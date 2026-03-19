@@ -69,8 +69,7 @@ PowerSpectrumResult compute_power_spectrum(
     std::vector<double> power_sum_sq(n_k, 0.0);
     
 #ifdef USE_FFTW
-    fftwf_plan_with_nthreads(1);
-    
+    // Note: FFTW threading disabled - using OpenMP for parallelism instead
     float* fftw_in = fftwf_alloc_real(n_pixels);
     fftwf_complex* fftw_out = fftwf_alloc_complex(n_k);
     
