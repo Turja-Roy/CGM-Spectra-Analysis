@@ -380,9 +380,10 @@ def cmd_compare(args):
     if hasattr(args, 'name') and args.name:
         comparison_name = args.name
     else:
-        # Auto-generate name from first and last simulation
         sim_names = extract_sim_names_from_paths(spectra_files)
-        comparison_name = f"comparison_{sim_names[0]}_to_{sim_names[-1]}"
+        sim_info = config.extract_simulation_info(spectra_files[0])
+        snap_num = sim_info.get('snap_num', 'unknown')
+        comparison_name = f"comparison_snap-{snap_num}_{sim_names[0]}_to_{sim_names[-1]}"
     
     output_dir = config.COMPARISON_DIR / comparison_name
     output_dir.mkdir(parents=True, exist_ok=True)
