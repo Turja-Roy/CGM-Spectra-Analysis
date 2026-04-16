@@ -20,6 +20,7 @@ from _analysis_cpp import (
     compute_line_width_distribution as _cpp_compute_line_width,
     compute_flux_statistics as _cpp_compute_flux_stats,
     compute_temperature_density_relation as _cpp_compute_temp_dens,
+    compute_tdens_binned,
 )
 
 

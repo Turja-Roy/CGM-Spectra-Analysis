@@ -61,7 +61,7 @@ def save_analysis_results(results_dict, output_dir, formats=['csv']):
             csv_files['temp_density'] = csv_path
         
         # Metal lines
-        if 'metal_lines' in results_dict and len(results_dict['metal_lines']) > 0:
+        if results_dict.get('metal_lines') and len(results_dict['metal_lines']) > 0:
             csv_path = output_dir / 'metal_lines.csv'
             save_metal_lines_csv(results_dict['metal_lines'], csv_path)
             csv_files['metal_lines'] = csv_path

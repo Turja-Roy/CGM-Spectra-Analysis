@@ -454,6 +454,7 @@ def compute_temperature_density_chunked(
     dens_filtered = []
     
     n_chunks = (n_sightlines + chunk_size - 1) // chunk_size
+    print_every = max(1, n_chunks // 10)
     
     with h5py.File(spectra_file, 'r') as f:
         temp_path = f'temperature/{temp_elem}/{temp_ion}'
@@ -466,7 +467,7 @@ def compute_temperature_density_chunked(
             start_idx = chunk_idx * chunk_size
             end_idx = min(start_idx + chunk_size, n_sightlines)
             
-            if verbose and chunk_idx % 10 == 0:
+            if verbose and (chunk_idx % print_every == 0 or chunk_idx == n_chunks - 1):
                 print(f"  Processing chunk {chunk_idx + 1}/{n_chunks} ({start_idx:,}-{end_idx:,})")
             
             tau_chunk = f[tau_path][start_idx:end_idx]
