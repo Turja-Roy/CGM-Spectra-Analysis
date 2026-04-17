@@ -16,6 +16,7 @@ spectra/
 # Notes and reading materials
 *.md
 Reading/
+Report/
 
 # C++ build files
 src/cpp/build/

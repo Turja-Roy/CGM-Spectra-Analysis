@@ -10,10 +10,7 @@ Comprehensive Python toolkit for analyzing the Lyman-alpha forest from cosmologi
 cd /path/to/CGM
 
 # Install dependencies
-pip install h5py numpy matplotlib scipy scikit-learn pandas
-
-# For spectra generation (optional)
-pip install fake_spectra
+pip install h5py numpy matplotlib scipy scikit-learn pandas fake_spectra
 
 # For MPI parallelization (optional, for generate command on HPC)
 pip install mpi4py
@@ -359,9 +356,10 @@ Edit `scripts/config.py` to customize:
 
 ### Paths
 ```python
-DATA_DIR = Path(__file__).parent / 'data'
-PLOTS_DIR = Path(__file__).parent / 'plots'
-OUTPUT_DIR = Path(__file__).parent / 'output'
+DATA_DIR = PROJECT_ROOT / "data"
+PLOTS_DIR = PROJECT_ROOT / "plots"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+SPECTRA_DIR = PROJECT_ROOT / "spectra"
 ```
 
 ### Default Parameters
@@ -374,14 +372,23 @@ DEFAULT_BOX_SIZE = 25000  # ckpc/h
 ### Spectral Lines
 ```python
 SPECTRAL_LINES = {
-    'lya': {'wavelength': 1215.67, 'element': 'H', 'ion': 1},
-    'civ': {'wavelength': 1548.19, 'element': 'C', 'ion': 4},
-    'ovi': {'wavelength': 1031.93, 'element': 'O', 'ion': 6},
-    'mgii': {'wavelength': 2796.35, 'element': 'Mg', 'ion': 2},
-    'siiv': {'wavelength': 1393.76, 'element': 'Si', 'ion': 4},
-    # ... more lines available
+    'lya':  ('H',  1, 1215, 'Lyman-alpha'),
+    'lyb':  ('H',  1, 1025, 'Lyman-beta'),
+    'heii': ('He', 2, 303,  'HeII-303'),
+    'civ':  ('C',  4, 1548, 'CIV-1548'),
+    'ovi':  ('O',  6, 1031, 'OVI-1031'),
+    'mgii': ('Mg', 2, 2796, 'MgII-2796'),
+    'siiv': ('Si', 4, 1393, 'SiIV-1393'),
 }
 ```
+
+## Build (C++ Extensions)
+
+Optional: Build pybind11 C++ extensions for accelerated analysis:
+```bash
+./compile.sh
+```
+Requires HPC modules: cmake, gcc, impi, eigen, fftw3
 
 ---
 
@@ -402,7 +409,7 @@ CGM/
 │   ├── data_export.py         # Export results (JSON + CSV)
 │   ├── comparison.py          # Statistical comparison framework
 │   ├── hdf5_io.py            # HDF5 I/O utilities
-│   ├── fake_spectra_fix.py   # Python 3.13 compatibility patches
+│   ├── fake_spectra_fix.py   # Patches for fake_spectra bugs (auto-imported)
 │   ├── cgm/
 │   │   ├── halos.py          # Halo analysis
 │   │   ├── targeted_spectra.py  # CGM spectra generation
@@ -424,20 +431,6 @@ CGM/
 ---
 
 ## Additional Tools
-
-### Batch Processing
-Process multiple snapshots in parallel:
-
-```bash
-# Generate spectra for all snapshots in a directory
-python batch_process.py generate data/IllustrisTNG/LH/LH_80/ -n 10000 --workers 4
-
-# Analyze all spectra files
-python batch_process.py analyze data/IllustrisTNG/LH/LH_80/ --workers 2
-
-# Full pipeline
-python batch_process.py pipeline data/IllustrisTNG/LH/LH_80/ -n 10000
-```
 
 ### Data Downloader
 Download CAMEL simulation data:
@@ -500,5 +493,8 @@ python downloader.py --suite IllustrisTNG --set LH --sim 80 --snapshot 82 \
 - h5py
 - matplotlib
 - scipy
-- scikit-learn (clustering analysis in full mode)
-- fake_spectra (spectra generation - includes Python 3.13 compatibility patches)
+- scikit-learn
+- fake_spectra (spectra generation)
+
+**Optional**:
+- mpi4py (MPI parallelization)
