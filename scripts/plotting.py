@@ -203,7 +203,7 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
 
     # Add power law fit if available
     if not np.isnan(beta):
-        fit_range = (np.log10(bin_centers) > 13) & (np.log10(bin_centers) < 17)
+        fit_range = (np.log10(bin_centers) > 12) & (np.log10(bin_centers) < 16)
         N_fit = bin_centers[fit_range]
         # Normalize to data at N ~ 1e14
         norm_idx = np.argmin(np.abs(bin_centers - 1e14))
@@ -217,7 +217,7 @@ def plot_column_density_distribution(cddf_dict, redshift, output_path, title=Non
     # Formatting
     ax.set_xlabel(r'Column Density $N_{\rm HI}$ [cm$^{-2}$]', fontsize=14)
     ax.set_ylabel(r'$f(N_{\rm HI})$ [Mpc$^{-1}$]', fontsize=14)
-    ax.set_xlim(1e12, 1e22)
+    ax.set_xlim(1e12, 1e16)
     
     # Set sensible y-axis limits for normalized CDDF
     # Typical range: 10^-3 to 10^3 Mpc^-1
@@ -357,40 +357,24 @@ def plot_temperature_density_relation(tdens_dict, redshift, output_path, title=N
 
     fig, ax = plt.subplots(figsize=(10, 8))
 
-    T_median = tdens_dict.get('T_median')
-    rho_centers = tdens_dict.get('rho_centers')
-    counts_per_bin = tdens_dict.get('counts_per_bin')
+    log_T = tdens_dict.get('log_T')
+    log_rho = tdens_dict.get('log_rho')
     T0 = tdens_dict.get('T0')
     gamma = tdens_dict.get('gamma')
-    
-    rho_valid = None
-    T_valid = None
-    counts_valid = None
 
-    if T_median is not None and rho_centers is not None and len(T_median) > 0:
-        valid_mask = np.isfinite(T_median) & np.isfinite(rho_centers)
-        valid_mask &= (counts_per_bin > 0) if counts_per_bin is not None else True
-        
-        rho_valid = rho_centers[valid_mask]
-        T_valid = T_median[valid_mask]
-        counts_valid = counts_per_bin[valid_mask] if counts_per_bin is not None else None
-        
-        if len(rho_valid) > 0:
-            scatter = ax.scatter(rho_valid, T_valid, c=counts_valid, 
-                                s=100, cmap='YlOrRd', norm=LogNorm(vmin=1, vmax=counts_valid.max() if counts_valid is not None else None),
-                                edgecolors='black', linewidths=0.5, zorder=5)
-            if counts_valid is not None:
-                cbar = plt.colorbar(scatter, ax=ax, label='Count per bin')
-            
-            for i in range(len(rho_valid)):
-                ax.annotate(f'{int(counts_valid[i]) if counts_valid is not None else ""}', 
-                           (rho_valid[i], T_valid[i]), 
-                           textcoords="offset points", xytext=(0, 10), 
-                           ha='center', fontsize=8)
+    if log_T is not None and log_rho is not None and len(log_T) > 0:
+        # 2D histogram (phase diagram) of the per-pixel T-rho distribution
+        h, xedges, yedges = np.histogram2d(log_rho, log_T, bins=50)
+        h = h.T  # transpose for correct orientation
+        extent = (xedges[0], xedges[-1], yedges[0], yedges[-1])
+        im = ax.imshow(h, origin='lower', extent=extent, aspect='auto',
+                       cmap='YlOrRd', norm=LogNorm(vmin=1, vmax=h.max()),
+                       interpolation='nearest')
+        cbar = plt.colorbar(im, ax=ax, label='Number of pixels')
 
     if np.isfinite(T0) and np.isfinite(gamma):
-        if rho_valid is not None and len(rho_valid) > 0:
-            rho_range = np.linspace(rho_valid.min(), rho_valid.max(), 100)
+        if log_rho is not None and len(log_rho) > 0:
+            rho_range = np.linspace(log_rho.min(), log_rho.max(), 100)
         else:
             rho_range = np.linspace(-2, 2, 100)
         T_fit = np.log10(T0) + (gamma - 1) * rho_range

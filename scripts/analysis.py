@@ -497,7 +497,9 @@ def compute_temperature_density_chunked(
             'T_median': np.array([]),
             'rho_centers': np.array([]),
             'counts_per_bin': np.array([]),
-            'n_bins': n_bins
+            'n_bins': n_bins,
+            'log_T': np.array([]),
+            'log_rho': np.array([]),
         }
     
     temperature = np.concatenate(temp_filtered)
@@ -509,14 +511,20 @@ def compute_temperature_density_chunked(
     del temp_filtered, dens_filtered
     
     result = compute_tdens_binned(temperature, density, n_bins)
-    
+    rho_mean = result['rho_mean']
+
     return {
         'T0': result['T0'],
         'gamma': result['gamma'],
-        'rho_mean': result['rho_mean'],
+        'rho_mean': rho_mean,
         'n_pixels': result['n_pixels'],
         'T_median': np.array(result['T_median']),
         'rho_centers': np.array(result['rho_centers']),
         'counts_per_bin': np.array(result['counts_per_bin']),
-        'n_bins': result['n_bins']
+        'n_bins': result['n_bins'],
+        # Per-pixel arrays for the 2D phase-diagram plot (Option A).
+        # temperature/density are already concatenated/resident here, so
+        # this only adds two log10 copies (~free vs the streaming I/O).
+        'log_T': np.log10(temperature),
+        'log_rho': np.log10(density / rho_mean),
     }
