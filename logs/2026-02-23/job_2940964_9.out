@@ -1,0 +1,21 @@
+========================================
+SLURM Job Information
+========================================
+Job ID: 2941901
+Array Task ID: 9
+Node: c313-194.ls6.tacc.utexas.edu
+Date: Mon Feb 23 11:31:07 CST 2026
+Working directory: /work/11170/roy/CGM
+
+Processing simulation: 1P_p2_1
+========================================
+
+===========================
+        Snapshot 14        
+===========================
+[0/2] Activating virtual environment...
+Virtual environment activated
+
+[2/2] Analyzing spectra...
+Command: python analyze_spectra.py analyze 'spectra/IllustrisTNG/1P/1P_p2_1/camel_lya_spectra_snap_014_n10000.hdf5'
+

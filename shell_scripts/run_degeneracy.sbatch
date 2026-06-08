@@ -1,31 +1,33 @@
 #!/bin/bash
-#SBATCH -J camel_analysis          # Job name
-#SBATCH -o logs/job_%A_%a.out      # Output file (%A=job ID, %a=array task ID)
-#SBATCH -e logs/job_%A_%a.err      # Error file
+#SBATCH -J degen_p1p2              # Job name
+#SBATCH -o logs/degen_%A_%a.out    # Output file (%A=job ID, %a=array task ID)
+#SBATCH -e logs/degen_%A_%a.err    # Error file
 #SBATCH -p normal                  # Partition/queue (normal for Lonestar6)
 #SBATCH -N 1                       # Number of nodes
 #SBATCH -n 48                      # Number of tasks (cores) - for MPI or workers
 #SBATCH -t 48:00:00                # Time limit (48 hours for high-z)
-#SBATCH --array=1-25               # Array job with 25 tasks (one per simulation)
+# NOTE: no --mem on Lonestar6 -- normal queue is exclusive/whole-node (256GB auto).
+#       Specifying --mem fails with "Requested node configuration is not available".
+#SBATCH --array=1-10               # Array job with 10 tasks (one per simulation)
 #SBATCH --mail-type=END,FAIL       # Email notifications (optional)
-#SBATCH --mail-user=$turja.roy@uta.edu  # Email address (update if needed)
+#SBATCH --mail-user=turja.roy@uta.edu  # Email address (update if needed)
 
 # ====================================================================
-# SLURM Array Job for CAMEL Spectra Generation and Analysis
+# SLURM Array Job: Omega0--sigma8 degeneracy (p1 + p2), one snapshot.
 # ====================================================================
-# This script processes 25 simulations in parallel as array tasks.
-# Supports both MPI (generate) and multiprocessing (analyze).
+# Processes the 10 p1/p2 simulations in parallel as array tasks for a
+# SINGLE snapshot (set SNAP_NUM below), generate + analyze.
 #
-# For generate: Uses fake_spectra MPI when --mpi flag is passed
-# For analyze: Uses --workers flag for parallel analysis
+# To cover all 6 redshifts, resubmit once per snapshot, changing SNAP_NUM:
+#   014 (z6)  018 (z5)  024 (z4)  032 (z3)  044 (z2)  080 (z0.27)
 # ====================================================================
 
 # Configuration
-USE_MPI=true           # Set to true for MPI parallelized generation
-NUM_WORKERS=48           # Number of parallel workers for analyze
+USE_MPI=true            # Set to true for MPI parallelized generation
+NUM_WORKERS=48          # Number of parallel workers for analyze
 N_SIGHTLINES=10000      # Number of sightlines to generate
 
-# Snapshot configuration
+# Snapshot configuration  -- CHANGE THIS and resubmit for each redshift
 SNAP_NUM=014
 SIGHTLINES_FILE="output/sightlines/analysis_sightlines_2025-01-28.hdf5"  # Set to "" to generate random sightlines
 
@@ -54,8 +56,8 @@ module load impi/19.0.9
 module load eigen/3.4.0
 module load fftw3/3.3.10
 
-# Get simulation name from simulations.txt based on array task ID
-SIMULATION=$(sed -n "${SLURM_ARRAY_TASK_ID}p" simulations.txt)
+# Get simulation name from simulations_p1p2.txt based on array task ID
+SIMULATION=$(sed -n "${SLURM_ARRAY_TASK_ID}p" shell_scripts/simulations_p1p2.txt)
 
 if [ -z "$SIMULATION" ]; then
     echo "ERROR: Could not read simulation name for array task $SLURM_ARRAY_TASK_ID"
@@ -104,19 +106,17 @@ echo ""
 echo "[2/3] Generating spectra..."
 
 if [ "$USE_MPI" = true ]; then
-    # MPI parallelized generation (use with mpirun)
-    # Note: On SLURM, use srun instead of mpirun for better integration
+    # MPI parallelized generation (use srun on SLURM)
     echo "Using MPI with $SLURM_NTASKS cores"
-    echo "Command: srun -n $SLURM_NTASKS python analyze_spectra.py generate '$SNAPSHOT_PATH' $SIGHTLINES_ARG --mpi -n $N_SIGHTLINES"
-    
     srun -n $SLURM_NTASKS python analyze_spectra.py generate "$SNAPSHOT_PATH" \
         $SIGHTLINES_ARG \
         --mpi \
+        -n $N_SIGHTLINES
 else
     # Sequential generation
-    echo "Command: python analyze_spectra.py generate '$SNAPSHOT_PATH' $SIGHTLINES_ARG -n $N_SIGHTLINES"
     python analyze_spectra.py generate "$SNAPSHOT_PATH" \
         $SIGHTLINES_ARG \
+        -n $N_SIGHTLINES
 fi
 
 if [ $? -ne 0 ]; then
@@ -131,7 +131,6 @@ echo ""
 
 # Step 2: Analyze spectra with parallel workers
 echo "[3/3] Analyzing spectra with $NUM_WORKERS workers..."
-echo "Command: python analyze_spectra.py analyze '$SPECTRA_PATH' --workers $NUM_WORKERS"
 echo ""
 
 python analyze_spectra.py analyze "$SPECTRA_PATH" --workers $NUM_WORKERS
@@ -144,7 +143,7 @@ fi
 
 echo ""
 echo "========================================"
-echo "Simulation $SIMULATION completed successfully!"
+echo "Simulation $SIMULATION (snap_$SNAP_NUM) completed successfully!"
 echo "Finished at: $(date)"
 echo "========================================"
 
