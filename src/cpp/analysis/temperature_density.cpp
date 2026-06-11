@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <omp.h>
 
 namespace cgm {
 namespace analysis {
@@ -76,9 +77,14 @@ TemperatureDensityResult compute_temperature_density_relation(
     log_rho.maxCoeff(&log_rho_max);
     Eigen::VectorXd rho_bins = Eigen::VectorXd::LinSpaced(n_bins, log_rho_min, log_rho_max);
     
-    std::vector<double> T_median;
-    std::vector<double> rho_centers;
-    
+    // Each density bin is independent: compute medians in parallel into fixed
+    // per-bin slots (no shared push_back), then gather valid bins in order.
+    // Output is identical to the serial version.
+    std::vector<double> bin_T_median(n_bins - 1, std::nan(""));
+    std::vector<double> bin_rho_center(n_bins - 1, std::nan(""));
+    std::vector<char> bin_valid(n_bins - 1, 0);
+
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < n_bins - 1; ++i) {
         std::vector<double> T_in_bin;
         for (int j = 0; j < result.n_pixels; ++j) {
@@ -88,8 +94,18 @@ TemperatureDensityResult compute_temperature_density_relation(
         }
         if (T_in_bin.size() > 10) {
             std::sort(T_in_bin.begin(), T_in_bin.end());
-            T_median.push_back(T_in_bin[T_in_bin.size() / 2]);
-            rho_centers.push_back((rho_bins(i) + rho_bins(i + 1)) / 2);
+            bin_T_median[i] = T_in_bin[T_in_bin.size() / 2];
+            bin_rho_center[i] = (rho_bins(i) + rho_bins(i + 1)) / 2;
+            bin_valid[i] = 1;
+        }
+    }
+
+    std::vector<double> T_median;
+    std::vector<double> rho_centers;
+    for (int i = 0; i < n_bins - 1; ++i) {
+        if (bin_valid[i]) {
+            T_median.push_back(bin_T_median[i]);
+            rho_centers.push_back(bin_rho_center[i]);
         }
     }
     
@@ -168,23 +184,32 @@ TemperatureDensityBinnedResult compute_tdens_binned(
         T_in_bins[bin_idx].push_back(log_T[i]);
     }
     
-    std::vector<double> rho_centers_valid;
-    std::vector<double> T_median_valid;
-    
+    // Per-bin sort/median is independent; each thread writes its own bin slots
+    // (distinct indices, no race). Valid bins gathered in order afterwards.
+    std::vector<char> bin_valid(n_bins, 0);
+
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < n_bins; ++i) {
         double bin_center = log_rho_min + (i + 0.5) * bin_width;
         result.rho_centers(i) = bin_center;
-        
+
         if (T_in_bins[i].size() > 10) {
             std::sort(T_in_bins[i].begin(), T_in_bins[i].end());
-            double median_T = T_in_bins[i][T_in_bins[i].size() / 2];
-            result.T_median(i) = median_T;
+            result.T_median(i) = T_in_bins[i][T_in_bins[i].size() / 2];
             result.counts_per_bin(i) = static_cast<int>(T_in_bins[i].size());
-            rho_centers_valid.push_back(bin_center);
-            T_median_valid.push_back(median_T);
+            bin_valid[i] = 1;
         } else {
             result.T_median(i) = std::nan("");
             result.counts_per_bin(i) = 0;
+        }
+    }
+
+    std::vector<double> rho_centers_valid;
+    std::vector<double> T_median_valid;
+    for (int i = 0; i < n_bins; ++i) {
+        if (bin_valid[i]) {
+            rho_centers_valid.push_back(result.rho_centers(i));
+            T_median_valid.push_back(result.T_median(i));
         }
     }
     

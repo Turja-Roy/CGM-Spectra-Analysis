@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <limits>
+#include <omp.h>
 
 namespace cgm {
 namespace analysis {
@@ -174,13 +175,25 @@ LineWidthResult compute_line_width_distribution(
     column_densities.reserve(n_sightlines * 10);
     b_params.reserve(n_sightlines * 10);
     
-    std::vector<double> tau_buffer(n_pixels);
     std::vector<double> v_buffer(n_pixels);
     for (int j = 0; j < n_pixels; ++j) {
         v_buffer[j] = j * velocity_spacing;
     }
-    
-    for (int i = 0; i < n_sightlines; ++i) {
+
+    // Per-sightline peak finding + Voigt fitting is independent: parallelize
+    // across sightlines with thread-local accumulators, then concatenate
+    // (keeping the N_HI/b pairing). Distribution stats are order-independent.
+    const int n_threads = omp_get_max_threads();
+    std::vector<std::vector<double>> tl_cd(n_threads), tl_b(n_threads);
+
+    #pragma omp parallel
+    {
+        std::vector<double>& local_cd = tl_cd[omp_get_thread_num()];
+        std::vector<double>& local_b = tl_b[omp_get_thread_num()];
+        std::vector<double> tau_buffer(n_pixels);  // thread-private scratch
+
+        #pragma omp for schedule(dynamic, 32)
+        for (int i = 0; i < n_sightlines; ++i) {
         const auto& tau_line = tau.row(i);
         const float* colden_line = nullptr;
         if (colden) {
@@ -291,12 +304,19 @@ LineWidthResult compute_line_width_distribution(
             }
             
             if (N_HI > constants::COLUMN_DENSITY_MIN) {
-                column_densities.push_back(N_HI);
-                b_params.push_back(b);
+                local_cd.push_back(N_HI);
+                local_b.push_back(b);
             }
         }
     }
     
+    }  // end #pragma omp parallel
+
+    for (int t = 0; t < n_threads; ++t) {
+        column_densities.insert(column_densities.end(), tl_cd[t].begin(), tl_cd[t].end());
+        b_params.insert(b_params.end(), tl_b[t].begin(), tl_b[t].end());
+    }
+
     LineWidthResult result;
     if (b_params.empty()) {
         result.N_HI = Eigen::VectorXd(0);

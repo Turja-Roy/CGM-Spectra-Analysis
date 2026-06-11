@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <omp.h>
 
 namespace cgm {
 namespace analysis {
@@ -30,7 +31,18 @@ ColumnDensityResult compute_column_density_distribution(
     std::vector<double> column_densities;
     column_densities.reserve(n_sightlines * 10);
     
-    for (int i = 0; i < n_sightlines; ++i) {
+    // Per-sightline feature detection is independent: parallelize across
+    // sightlines into thread-local lists, then concatenate. The CDDF histogram
+    // and power-law fit are order-independent, so the result is unchanged.
+    const int n_threads = omp_get_max_threads();
+    std::vector<std::vector<double>> tl_cd(n_threads);
+
+    #pragma omp parallel
+    {
+        std::vector<double>& local_cd = tl_cd[omp_get_thread_num()];
+
+        #pragma omp for schedule(dynamic, 64)
+        for (int i = 0; i < n_sightlines; ++i) {
         const auto& tau_line = tau.row(i);
         const float* colden_line = nullptr;
         if (has_colden) {
@@ -63,7 +75,7 @@ ColumnDensityResult compute_column_density_distribution(
                 }
                 
                 if (N_HI > constants::COLUMN_DENSITY_MIN) {
-                    column_densities.push_back(N_HI);
+                    local_cd.push_back(N_HI);
                 }
                 in_feature = false;
             }
@@ -85,11 +97,15 @@ ColumnDensityResult compute_column_density_distribution(
                 N_HI = constants::TAU_TO_COLDEN_CONSTANT * tau_sum * velocity_spacing;
             }
             if (N_HI > constants::COLUMN_DENSITY_MIN) {
-                column_densities.push_back(N_HI);
+                local_cd.push_back(N_HI);
             }
         }
-    }
-    
+        }
+    }  // end #pragma omp parallel
+
+    for (const auto& vth : tl_cd)
+        column_densities.insert(column_densities.end(), vth.begin(), vth.end());
+
     double dX;
     if (!std::isnan(redshift) && !std::isnan(box_size_ckpc_h)) {
         dX = box_size_ckpc_h / hubble / 1000.0;
