@@ -44,12 +44,11 @@ def compute_flux_statistics(tau: np.ndarray) -> Dict[str, float]:
     }
 
 
-def compute_power_spectrum(
+def _scipy_power_spectrum(
     flux: np.ndarray,
     velocity_spacing: float,
-    chunk_size: int = 1000
 ) -> Dict[str, Any]:
-    """Compute power spectrum using scipy FFT."""
+    """Vectorized scipy power spectrum. Always-available, trusted reference path."""
     from scipy import fft
     
     n_sightlines, n_pixels = flux.shape
@@ -61,15 +60,14 @@ def compute_power_spectrum(
     n_k = n_pixels // 2 + 1
     k = 2.0 * np.pi * np.arange(n_k) / (n_pixels * velocity_spacing)
     
-    power_sum = np.zeros(n_k, dtype=np.float64)
-    power_sum_sq = np.zeros(n_k, dtype=np.float64)
-    
-    for i in range(n_sightlines):
-        delta_F = flux[i] / mean_flux - 1.0
-        fft_result = fft.rfft(delta_F)
-        power = np.abs(fft_result) ** 2 / n_pixels
-        power_sum += power[:n_k]
-        power_sum_sq += power[:n_k] ** 2
+    # Vectorized over all sightlines: one batched real FFT, threaded across cores
+    # (scipy.fft releases the GIL via workers=-1). Physics is identical to the old
+    # per-sightline loop; float64 accumulation matches its precision.
+    delta_F = flux / mean_flux - 1.0                    # (n_sightlines, n_pixels)
+    fft_result = fft.rfft(delta_F, axis=1, workers=-1)  # (n_sightlines, n_k)
+    power = np.abs(fft_result) ** 2 / n_pixels          # (n_sightlines, n_k)
+    power_sum = power.sum(axis=0, dtype=np.float64)
+    power_sum_sq = (power.astype(np.float64) ** 2).sum(axis=0)
     
     P_k_mean = (power_sum / n_sightlines) * velocity_spacing
     mean_power = power_sum / n_sightlines
@@ -90,6 +88,36 @@ def compute_power_spectrum(
         'n_sightlines': n_sightlines,
         'velocity_spacing': velocity_spacing,
     }
+
+
+def compute_power_spectrum(
+    flux: np.ndarray,
+    velocity_spacing: float,
+    chunk_size: int = 1000,
+    use_cpp: bool = False,
+) -> Dict[str, Any]:
+    """Flux power spectrum P_F(k): scipy by default, optional C++ FFTW via use_cpp.
+
+    TODO: when sightline counts grow large, revisit the C++ FFTW path (fix CMake
+    FFTW detection + the OpenMP thread race) and benchmark before enabling use_cpp.
+    """
+    if use_cpp:
+        try:
+            f32 = flux if flux.dtype == np.float32 else flux.astype(np.float32)
+            result = _cpp_compute_power_spectrum(f32, velocity_spacing, chunk_size)
+            return {
+                'k': np.array(result['k']),
+                'P_k_mean': np.array(result['P_k_mean']),
+                'P_k_std': np.array(result['P_k_std']),
+                'P_k_err': np.array(result['P_k_err']),
+                'mean_flux': result['mean_flux'],
+                'n_modes': np.array(result['n_modes']),
+                'n_sightlines': result['n_sightlines'],
+                'velocity_spacing': result['velocity_spacing'],
+            }
+        except Exception as e:
+            print(f"  [power spectrum] C++ path unavailable ({e}); using scipy")
+    return _scipy_power_spectrum(flux, velocity_spacing)
 
 
 def compute_column_density_distribution(

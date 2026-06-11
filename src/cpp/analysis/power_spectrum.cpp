@@ -116,53 +116,14 @@ PowerSpectrumResult compute_power_spectrum(
     fftwf_free(fftw_in);
     fftwf_free(fftw_out);
 #else
-    // Fallback: simple O(n^2) DFT - not used in practice
-    int n_chunks = (n_sightlines + chunk_size - 1) / chunk_size;
-    
-    #pragma omp parallel
-    
-    #pragma omp parallel
-    {
-        std::vector<double> local_power_sum(n_k, 0.0);
-        std::vector<double> local_power_sum_sq(n_k, 0.0);
-        
-        #pragma omp for schedule(dynamic)
-        for (int c = 0; c < n_chunks; ++c) {
-            int start = c * chunk_size;
-            int end = std::min((c + 1) * chunk_size, n_sightlines);
-            
-            for (int i = start; i < end; ++i) {
-                Eigen::ArrayXf delta_F = flux.row(i) / mean_flux - 1.0f;
-                
-                // Simple DFT (very slow - just for fallback)
-                Eigen::VectorXd power(n_k);
-                for (int k_idx = 0; k_idx < n_k; ++k_idx) {
-                    double real_sum = 0.0;
-                    double imag_sum = 0.0;
-                    for (int j = 0; j < n_pixels; ++j) {
-                        double angle = 2.0 * M_PI * k_idx * j / n_pixels;
-                        real_sum += delta_F(j) * std::cos(angle);
-                        imag_sum += delta_F(j) * std::sin(angle);
-                    }
-                    power(k_idx) = (real_sum * real_sum + imag_sum * imag_sum) / n_pixels;
-                }
-                
-                for (int j = 0; j < n_k; ++j) {
-                    double p = power(j);
-                    local_power_sum[j] += p;
-                    local_power_sum_sq[j] += p * p;
-                }
-            }
-        }
-        
-        #pragma omp critical
-        {
-            for (int j = 0; j < n_k; ++j) {
-                power_sum[j] += local_power_sum[j];
-                power_sum_sq[j] += local_power_sum_sq[j];
-            }
-        }
-    }
+    // Built without FFTW: do NOT fall back to a slow O(n^2) DFT. Raise so the
+    // Python wrapper (scripts/analysis_cpp.py) catches it and uses the
+    // vectorized scipy power spectrum instead.
+    (void)chunk_size;
+    (void)mean_flux;
+    throw std::runtime_error(
+        "C++ power spectrum requires FFTW (built without USE_FFTW); "
+        "use the scipy power-spectrum path instead");
 #endif
     
     Eigen::VectorXd power_sum_eigen = Eigen::VectorXd::Map(power_sum.data(), n_k);
