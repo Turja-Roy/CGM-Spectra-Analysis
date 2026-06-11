@@ -23,12 +23,10 @@
 # ====================================================================
 
 # Configuration
-USE_MPI=true            # Set to true for MPI parallelized generation
-NUM_WORKERS=48          # Number of parallel workers for analyze
 N_SIGHTLINES=10000      # Number of sightlines to generate
 
 # Snapshot configuration  -- CHANGE THIS and resubmit for each redshift
-SNAP_NUM=014
+SNAP_NUM=080
 SIGHTLINES_FILE="output/sightlines/analysis_sightlines_2025-01-28.hdf5"  # Set to "" to generate random sightlines
 
 # Print job info
@@ -43,8 +41,7 @@ echo "Memory: $SLURM_MEM_PER_NODE MB"
 echo "Date: $(date)"
 echo "Working directory: $(pwd)"
 echo ""
-echo "MPI enabled: $USE_MPI"
-echo "Analyze workers: $NUM_WORKERS"
+echo "Threads (OpenMP, generate + analyze): ${SLURM_CPUS_ON_NODE:-128}"
 echo "Snapshot: snap_$SNAP_NUM"
 echo "Sightlines: ${SIGHTLINES_FILE:-random}"
 echo ""
@@ -103,21 +100,14 @@ echo "Virtual environment activated"
 echo ""
 
 # Step 1: Generate spectra
-echo "[2/3] Generating spectra..."
+# Single process; fake_spectra's C kernel threads across the node via OpenMP.
+# OMP_NUM_THREADS is scoped to this command so it does not oversubscribe the
+# multiprocessing pool in the analyze step below.
+echo "[2/3] Generating spectra (OpenMP, ${SLURM_CPUS_ON_NODE:-128} threads)..."
 
-if [ "$USE_MPI" = true ]; then
-    # MPI parallelized generation (use srun on SLURM)
-    echo "Using MPI with $SLURM_NTASKS cores"
-    srun -n $SLURM_NTASKS python analyze_spectra.py generate "$SNAPSHOT_PATH" \
-        $SIGHTLINES_ARG \
-        --mpi \
-        -n $N_SIGHTLINES
-else
-    # Sequential generation
-    python analyze_spectra.py generate "$SNAPSHOT_PATH" \
-        $SIGHTLINES_ARG \
-        -n $N_SIGHTLINES
-fi
+OMP_NUM_THREADS=${SLURM_CPUS_ON_NODE:-128} python analyze_spectra.py generate "$SNAPSHOT_PATH" \
+    $SIGHTLINES_ARG \
+    -n $N_SIGHTLINES
 
 if [ $? -ne 0 ]; then
     echo ""
@@ -129,11 +119,14 @@ echo ""
 echo "Spectra generation completed successfully"
 echo ""
 
-# Step 2: Analyze spectra with parallel workers
-echo "[3/3] Analyzing spectra with $NUM_WORKERS workers..."
+# Step 2: Analyze spectra.
+# Single process (--workers 1) so each stage threads across the whole node:
+# scipy FFT (power spectrum) + OpenMP C++ kernels (cddf/lwd/tdens). Using the
+# multiprocessing pool here instead would oversubscribe cores against OMP.
+echo "[3/3] Analyzing spectra (OpenMP, ${SLURM_CPUS_ON_NODE:-128} threads)..."
 echo ""
 
-python analyze_spectra.py analyze "$SPECTRA_PATH" --workers $NUM_WORKERS
+OMP_NUM_THREADS=${SLURM_CPUS_ON_NODE:-128} python analyze_spectra.py analyze "$SPECTRA_PATH" --workers 1
 
 if [ $? -ne 0 ]; then
     echo ""

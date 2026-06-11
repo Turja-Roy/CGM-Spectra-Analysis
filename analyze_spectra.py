@@ -105,8 +105,6 @@ Documentation:
                             help='Load sightlines from HDF5 file (overrides -n and --seed)')
     parser_gen.add_argument('-o', '--output', type=str, default=None,
                             help='Output file path (default: auto-generated)')
-    parser_gen.add_argument('--mpi', action='store_true',
-                            help='Use MPI parallelization via fake_spectra (requires mpi4py, run with mpirun)')
     parser_gen.set_defaults(func=cmd_generate)
 
     parser_analyze = subparsers.add_parser(
