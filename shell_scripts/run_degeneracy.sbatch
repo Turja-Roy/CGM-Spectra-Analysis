@@ -26,7 +26,7 @@
 N_SIGHTLINES=10000      # Number of sightlines to generate
 
 # Snapshot configuration  -- CHANGE THIS and resubmit for each redshift
-SNAP_NUM=080
+SNAP_NUM=014
 SIGHTLINES_FILE="output/sightlines/analysis_sightlines_2025-01-28.hdf5"  # Set to "" to generate random sightlines
 
 # Print job info
@@ -133,6 +133,13 @@ if [ $? -ne 0 ]; then
     echo "ERROR: Spectra analysis failed for $SIMULATION"
     exit 1
 fi
+
+# Save spectra structure/metadata (light) so it survives spectra/ cleanup.
+EXPLORE_OUT="output/explore/IllustrisTNG/1P/${SIMULATION}/snap_${SNAP_NUM}.txt"
+mkdir -p "$(dirname "$EXPLORE_OUT")"
+python analyze_spectra.py explore "$SPECTRA_PATH" > "$EXPLORE_OUT" 2>&1 \
+    && echo "Saved spectra metadata to $EXPLORE_OUT" \
+    || echo "Warning: explore failed (see $EXPLORE_OUT)"
 
 echo ""
 echo "========================================"
