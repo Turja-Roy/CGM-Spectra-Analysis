@@ -1,0 +1,30 @@
+======================================================================
+EXPLORING: spectra/IllustrisTNG/1P/1P_p8_1/camel_lya_spectra_snap_014_n10000.hdf5
+======================================================================
+
+======================================================================
+HDF5 Structure: camel_lya_spectra_snap_014_n10000.hdf5
+======================================================================
+
+Top-level groups: ['Header', 'Sightlines', 'colden', 'density_weight_density', 'num_important', 'spectra', 'tau', 'tau_obs', 'temperature', 'velocity']
+
+Header attributes:
+
+======================================================================
+SAMPLE SPECTRA DATA
+======================================================================
+
+Dataset: tau/H/1/1215
+Shape: (10000, 36336)
+
+Sightline 0:
+  tau:  4.685e+00 to 6.417e+02, mean=58.890
+  flux: 0.000 to 0.009, mean=0.000
+
+Sightline 1:
+  tau:  2.726e+00 to 1.151e+04, mean=235.305
+  flux: 0.000 to 0.065, mean=0.000
+
+Sightline 2:
+  tau:  3.956e+00 to 3.310e+03, mean=116.588
+  flux: 0.000 to 0.019, mean=0.001

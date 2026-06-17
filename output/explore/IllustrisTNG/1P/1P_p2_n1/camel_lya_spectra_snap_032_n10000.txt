@@ -1,0 +1,5 @@
+
+Error: Unable to synchronously open file (file signature not found)
+======================================================================
+EXPLORING: spectra/IllustrisTNG/1P/1P_p2_n1/camel_lya_spectra_snap_032_n10000.hdf5
+======================================================================

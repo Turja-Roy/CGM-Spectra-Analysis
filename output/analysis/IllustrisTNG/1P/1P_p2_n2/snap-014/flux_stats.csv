@@ -10,3 +10,5 @@ effective_tau,11.233345031738281
 deep_absorption_frac,0.04622586816549301
 moderate_absorption_frac,2.759409289865289e-05
 weak_absorption_frac,6.113958079367876e-06
+tau_eff_err,0.06241512667336486
+tau_eff_std,6.241512667336486
