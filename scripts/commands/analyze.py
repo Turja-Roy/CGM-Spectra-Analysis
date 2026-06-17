@@ -701,7 +701,14 @@ def cmd_analyze(args):
     print("\n[9/8] Exporting analysis results...")
     try:
         from scripts.data_export import save_analysis_results, get_analysis_output_dir
-        
+
+        # Persist the tau_eff uncertainty into flux_stats (effective_tau is already
+        # there). It was computed but never exported, which blocked CSV-only reload
+        # of the tau_eff error bars in evolve/compare. Per-sightline scatter still
+        # needs raw tau, so we only carry the two scalars.
+        stats['tau_eff_err'] = tau_eff_dict.get('tau_eff_err', float('nan'))
+        stats['tau_eff_std'] = tau_eff_dict.get('tau_eff_std', float('nan'))
+
         # Prepare results dictionary
         results_dict = {
             'metadata': {

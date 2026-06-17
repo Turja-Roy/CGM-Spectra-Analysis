@@ -89,6 +89,7 @@ def cmd_evolve(args):
 
 def cmd_diagnose(args):
     """Diagnostic analysis of single spectra file."""
+    import os
     import h5py
     import numpy as np
     from scripts.comparison import load_spectra_results
@@ -113,33 +114,46 @@ def cmd_diagnose(args):
         print(f"Error: {results.get('error', 'unknown error')}")
         return 1
     
-    print(f"  z={results['redshift']:.3f}, N={results['n_sightlines']:,} sightlines")
-    
-    # Load tau data
-    with h5py.File(args.spectra_file, 'r') as f:
-        if 'tau/H/1/1215' in f:
-            tau = np.array(f['tau/H/1/1215'])
-        else:
-            print("Error: No tau data found")
-            return 1
-    
-    flux = np.exp(-tau)
-    
-    # Basic statistics
+    z = results.get('redshift')
+    n_los = results.get('n_sightlines')
+    z_str = f"{z:.3f}" if z is not None else "n/a"
+    n_str = f"{n_los:,}" if n_los is not None else "n/a"
+    print(f"  z={z_str}, N={n_str} sightlines  (source: {results.get('loaded_from', 'spectra')})")
+
+    # Basic statistics: summary quantities, read from the CSVs -- no raw spectra
+    # needed (tau_eff_err may be NaN for CSVs written before it was exported).
     print("\nBasic Statistics:")
     print(f"  τ_eff:      {results['tau_eff']['tau_eff']:.4f} ± {results['tau_eff']['tau_eff_err']:.4f}")
     print(f"  <F>:        {results['flux_stats']['mean_flux']:.4f}")
     print(f"  σ_F:        {results['flux_stats']['std_flux']:.4f}")
     print(f"  N_abs:      {results['cddf']['n_absorbers']}")
-    
+
+    # --distribution / --features need the raw per-pixel tau, which lives only in
+    # the spectra HDF5 (not the CSVs). Load it lazily, and only if requested.
+    tau = flux = None
+    if args.distribution or args.features:
+        if os.path.exists(args.spectra_file):
+            with h5py.File(args.spectra_file, 'r') as f:
+                if 'tau/H/1/1215' in f:
+                    tau = np.array(f['tau/H/1/1215'])
+                    flux = np.exp(-tau)
+                else:
+                    print("Error: No tau data found")
+                    return 1
+        else:
+            print("\n  [skip] --distribution/--features need the raw spectra HDF5 "
+                  f"(not found:\n         {args.spectra_file}).")
+            print("         Basic statistics above are from the CSVs; regenerate the "
+                  "spectra with `analyze_spectra.py generate` to get per-pixel features.")
+
     # Distribution analysis
-    if args.distribution:
+    if args.distribution and flux is not None:
         print("\nGenerating distribution plots...")
-        compare_distributions([flux], ['Spectrum'], 
+        compare_distributions([flux], ['Spectrum'],
                             output_dir / 'flux_distribution.png', 'Flux')
-    
+
     # Feature extraction
-    if args.features:
+    if args.features and tau is not None:
         print("\nExtracting spectral features...")
         features = extract_spectral_features(tau)
         

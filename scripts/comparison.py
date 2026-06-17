@@ -23,12 +23,196 @@ from .exploratory import (
 )
 
 
-def load_spectra_results(spectra_file, velocity_spacing=0.1):
+def _parse_csv_comment_header(path):
+    """Parse leading '# key = value' comment lines into a dict.
+
+    Values are coerced to float when possible; trailing units (e.g.
+    '1.234 Mpc (comoving)') are dropped, keeping only the first token.
+    """
+    meta = {}
+    with open(path, 'r') as fh:
+        for line in fh:
+            if not line.startswith('#'):
+                break
+            body = line.lstrip('#').strip()
+            if '=' not in body:
+                continue
+            key, _, val = body.partition('=')
+            key = key.strip()
+            tokens = val.strip().split()
+            val = tokens[0] if tokens else ''
+            try:
+                meta[key] = float(val)
+            except ValueError:
+                meta[key] = val
+    return meta
+
+
+def load_results_from_csv(spectra_file):
+    """Build a load_spectra_results-shaped dict from the analysis CSVs.
+
+    The physics is identical to the raw-tau path: every value here is read back
+    verbatim from what `analyze` wrote (effective_tau = -ln<F>, P_F(k), CDDF,
+    T-rho). The spectra_file path is used only as a key to locate the analysis
+    output directory, so this works even after the raw spectra HDF5 is deleted.
+
+    Fields that were never persisted (per-sightline / per-pixel arrays) are set
+    to None; tau_eff_err falls back to NaN for CSVs written before it was
+    exported (plots render NaN error bars as no bar, not a crash).
+
+    Returns a dict with success=False (and 'error') if the core CSVs are absent,
+    signalling the caller to try the raw-tau path instead.
+    """
+    import pandas as pd
+    from scripts.data_export import get_analysis_output_dir
+
+    out = {'filepath': str(spectra_file), 'success': False, 'loaded_from': 'csv'}
+    output_dir = Path(get_analysis_output_dir(spectra_file))
+
+    ps_path = output_dir / 'power_spectrum.csv'
+    cddf_path = output_dir / 'cddf.csv'
+    stats_path = output_dir / 'flux_stats.csv'
+    if not (ps_path.exists() and cddf_path.exists() and stats_path.exists()):
+        out['error'] = f'analysis CSVs not found in {output_dir}'
+        return out
+
+    try:
+        # --- flux statistics (two-column statistic,value) ---
+        fs_df = pd.read_csv(stats_path)
+        flux_stats = dict(zip(fs_df['statistic'],
+                              pd.to_numeric(fs_df['value'], errors='coerce')))
+        out['flux_stats'] = flux_stats
+
+        # --- tau_eff: effective_tau == -ln<F>, identical to the raw-tau value ---
+        out['tau_eff'] = {
+            'tau_eff': flux_stats.get('effective_tau'),
+            'mean_flux': flux_stats.get('mean_flux'),
+            'tau_eff_err': flux_stats.get('tau_eff_err', np.nan),
+            'tau_eff_std': flux_stats.get('tau_eff_std', np.nan),
+            'tau_eff_per_sightline': None,  # needs raw tau; not persisted
+        }
+
+        # --- power spectrum ---
+        ps_df = pd.read_csv(ps_path)
+        k = ps_df['k_s_per_km'].values
+        ps = {
+            'k': k,
+            'P_k_mean': ps_df['P_k_mean_km_per_s'].values,
+            'P_k_std': ps_df['P_k_std'].values if 'P_k_std' in ps_df else np.zeros_like(k),
+            'P_k_err': ps_df['P_k_err'].values if 'P_k_err' in ps_df else np.zeros_like(k),
+            'mean_flux': flux_stats.get('mean_flux'),
+        }
+        out['power_spectrum'] = ps
+
+        # --- CDDF (+ metadata from the comment header) ---
+        cmeta = _parse_csv_comment_header(cddf_path)
+        cddf_df = pd.read_csv(cddf_path, comment='#')
+        log10_N = cddf_df['log10_N_HI'].values
+        bin_centers = (cddf_df['bin_center'].values
+                       if 'bin_center' in cddf_df else 10.0 ** log10_N)
+        if 'delta_log_N' in cddf_df:
+            delta_log_N = cddf_df['delta_log_N'].values
+        else:
+            d = np.diff(log10_N)
+            delta_log_N = np.full_like(log10_N, np.median(d) if len(d) else np.nan)
+        f_N = cddf_df['f_N_HI'].values
+        out['cddf'] = {
+            'log10_N_HI': log10_N,
+            'bin_centers': bin_centers,
+            'bins': 10.0 ** np.append(log10_N - delta_log_N / 2.0,
+                                      log10_N[-1] + delta_log_N[-1] / 2.0) if len(log10_N) else np.array([]),
+            'counts': cddf_df['counts'].values if 'counts' in cddf_df else np.zeros_like(log10_N),
+            'f_N': f_N,
+            'f_N_HI': f_N,
+            'delta_log_N': delta_log_N,
+            'beta_fit': cmeta.get('beta_fit', np.nan),
+            'n_absorbers': int(cmeta.get('n_absorbers', 0)),
+            'n_sightlines': int(cmeta['n_sightlines']) if 'n_sightlines' in cmeta else None,
+            'dX': cmeta.get('dX', np.nan),
+            'redshift': cmeta.get('redshift'),
+        }
+
+        # --- line widths (recompute summary stats from the b array) ---
+        out['line_widths'] = None
+        lw_path = output_dir / 'line_widths.csv'
+        if lw_path.exists():
+            lw_df = pd.read_csv(lw_path)
+            if 'b_param_km_s' in lw_df and len(lw_df) > 0:
+                b = lw_df['b_param_km_s'].values
+                out['line_widths'] = {
+                    'N_HI': lw_df['N_HI'].values if 'N_HI' in lw_df else np.array([]),
+                    'b_params': b,
+                    'b_median': float(np.median(b)),
+                    'b_mean': float(np.mean(b)),
+                    'b_std': float(np.std(b)),
+                    'n_absorbers': int(len(b)),
+                }
+
+        # --- temperature-density (fit params from header, scatter from columns) ---
+        out['temp_density'] = None
+        td_path = output_dir / 'temp_density.csv'
+        if td_path.exists():
+            tmeta = _parse_csv_comment_header(td_path)
+            try:
+                td_df = pd.read_csv(td_path, comment='#')
+            except Exception:
+                td_df = None
+            has_cols = td_df is not None and 'log_temperature' in td_df and len(td_df) > 0
+            out['temp_density'] = {
+                'T0': tmeta.get('T0', np.nan),
+                'gamma': tmeta.get('gamma', np.nan),
+                'gamma_err': tmeta.get('gamma_err', np.nan),
+                'n_pixels': int(tmeta['n_pixels']) if 'n_pixels' in tmeta and str(tmeta['n_pixels']).replace('.', '', 1).isdigit() else None,
+                'log_T': td_df['log_temperature'].values if has_cols else np.array([]),
+                'log_rho': td_df['log_density'].values if has_cols else np.array([]),
+            }
+
+        # --- top-level metadata ---
+        out['redshift'] = (float(out['cddf']['redshift'])
+                           if out['cddf']['redshift'] is not None else None)
+        out['n_sightlines'] = out['cddf']['n_sightlines']
+        out['n_pixels'] = 2 * (len(k) - 1) if len(k) else None
+        out['success'] = True
+    except Exception as e:
+        out['success'] = False
+        out['error'] = f'CSV parse failed in {output_dir}: {e}'
+    return out
+
+
+def load_spectra_results(spectra_file, velocity_spacing=0.1, prefer_csv=True):
+    """Load Lya analysis results for one sim/snapshot, CSV-first.
+
+    Reads the analysis CSVs (output/analysis/.../snap-XXX/) by default — they
+    carry identical physics to the raw-tau computation and survive deletion of
+    the spectra HDF5. Falls back to recomputing from the raw tau only when the
+    CSVs are absent and the spectra file still exists.
+    """
+    if prefer_csv:
+        csv_res = load_results_from_csv(spectra_file)
+        if csv_res.get('success'):
+            return csv_res
+        csv_err = csv_res.get('error')
+    else:
+        csv_err = None
+
+    if os.path.exists(spectra_file):
+        return _load_results_from_spectra(spectra_file, velocity_spacing)
+
+    return {'filepath': str(spectra_file), 'success': False,
+            'error': csv_err or f'no analysis CSVs and spectra file missing: {spectra_file}'}
+
+
+def _load_results_from_spectra(spectra_file, velocity_spacing=0.1):
+    """Recompute analysis results from the raw tau in the spectra HDF5.
+
+    Legacy / fallback path used only when the analysis CSVs are unavailable
+    (see load_spectra_results). Heavier: reads the full per-sightline tau array.
+    """
     results = {
         'filepath': str(spectra_file),
         'success': False,
     }
-    
+
     try:
         with h5py.File(spectra_file, 'r') as f:
             # Get metadata
@@ -470,7 +654,19 @@ def compare_simulations_comprehensive(spectra_files, labels=None, output_dir=Non
     
     if len(all_results) == 0:
         return None
-    
+
+    # detailed/full modes do per-pixel / per-sightline work (flux distributions,
+    # KS tests, clustering, feature extraction) that is NOT stored in the CSVs.
+    # If the raw spectra HDF5 files are gone, transparently downgrade to 'quick'
+    # (fully CSV-based) instead of crashing.
+    if mode in ('detailed', 'full'):
+        missing = [fp for fp in valid_files if not os.path.exists(fp)]
+        if missing:
+            print(f"  [warn] {len(missing)}/{len(valid_files)} raw spectra file(s) "
+                  f"absent; per-pixel analyses need them. Downgrading mode "
+                  f"'{mode}' -> 'quick' (CSV-only).")
+            mode = 'quick'
+
     if output_dir is None:
         output_dir = Path('plots/comparisons')
     else:
